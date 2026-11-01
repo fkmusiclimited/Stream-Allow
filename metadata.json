@@ -1,0 +1,6 @@
+{
+  "name": "Stream Join - YouTube Live Streaming Automation SaaS",
+  "description": "Automate, manage, and grow your YouTube live streams easily. Professional 24/7 playlist streaming, multi-channel management, analytics, and monetization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
