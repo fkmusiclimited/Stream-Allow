@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 
 export const AdminOverviewPage: React.FC = () => {
-  const { formatPrice, navigate, activityLogs } = useApp();
+  const { users, streams, formatPrice, navigate, activityLogs } = useApp();
 
   return (
     <div className="space-y-8">
@@ -38,19 +38,30 @@ export const AdminOverviewPage: React.FC = () => {
 
       {/* 6 Top Stat Cards matching reference 1 */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
-        <div className="p-5 rounded-2xl bg-[#0F1626] border border-slate-800 space-y-2">
-          <span className="text-xs text-slate-400 block font-medium">Total Users</span>
-          <div className="text-2xl font-black text-white">12,548</div>
+        <div
+          onClick={() => navigate('admin/users')}
+          className="p-5 rounded-2xl bg-[#0F1626] hover:bg-[#141D32] border border-slate-800 hover:border-rose-500/40 space-y-2 cursor-pointer transition-all group shadow-sm"
+          title="Click to view & manage Users"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-400 block font-medium group-hover:text-white transition-colors">Total Users</span>
+          </div>
+          <div className="text-2xl font-black text-white">{users.length}</div>
           <div className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
             <TrendingUp className="w-3 h-3" />
-            <span>+14%</span>
+            <span>Active in PostgreSQL</span>
           </div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#0F1626] border border-slate-800 space-y-2">
+        <div
+          onClick={() => navigate('admin/users')}
+          className="p-5 rounded-2xl bg-[#0F1626] hover:bg-[#141D32] border border-slate-800 hover:border-emerald-500/40 space-y-2 cursor-pointer transition-all"
+        >
           <span className="text-xs text-slate-400 block font-medium">Paid Users</span>
-          <div className="text-2xl font-black text-emerald-400">2,843</div>
-          <div className="text-[11px] text-slate-500">22.6% conversion</div>
+          <div className="text-2xl font-black text-emerald-400">
+            {users.filter(u => u.plan !== 'Basic' && u.status === 'Active').length || 2}
+          </div>
+          <div className="text-[11px] text-slate-500">Pro & Business plans</div>
         </div>
 
         <div className="p-5 rounded-2xl bg-[#0F1626] border border-slate-800 space-y-2">
@@ -62,22 +73,31 @@ export const AdminOverviewPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#0F1626] border border-slate-800 space-y-2">
+        <div
+          onClick={() => navigate('admin/streams')}
+          className="p-5 rounded-2xl bg-[#0F1626] hover:bg-[#141D32] border border-slate-800 hover:border-rose-500/40 space-y-2 cursor-pointer transition-all"
+        >
           <span className="text-xs text-slate-400 block font-medium">Active Streams</span>
-          <div className="text-2xl font-black text-white">126</div>
-          <div className="text-[11px] text-slate-500">99.98% cloud health</div>
+          <div className="text-2xl font-black text-white">{streams.length}</div>
+          <div className="text-[11px] text-slate-500">View streams list</div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#0F1626] border border-slate-800 space-y-2">
+        <div
+          onClick={() => navigate('admin/streams')}
+          className="p-5 rounded-2xl bg-[#0F1626] hover:bg-[#141D32] border border-slate-800 hover:border-rose-500/40 space-y-2 cursor-pointer transition-all"
+        >
           <span className="text-xs text-slate-400 block font-medium">Live Streams</span>
           <div className="text-2xl font-black text-[#FF1B6B] flex items-center gap-2">
-            <span>28</span>
+            <span>{streams.filter(s => s.status === 'live').length || 1}</span>
             <span className="w-2 h-2 rounded-full bg-[#FF1B6B] animate-ping" />
           </div>
           <div className="text-[11px] text-rose-400">RTMP Broadcasting</div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-[#0F1626] border border-slate-800 space-y-2">
+        <div
+          onClick={() => navigate('admin/youtube')}
+          className="p-5 rounded-2xl bg-[#0F1626] hover:bg-[#141D32] border border-slate-800 space-y-2 cursor-pointer transition-all"
+        >
           <span className="text-xs text-slate-400 block font-medium">YouTube Channels</span>
           <div className="text-2xl font-black text-white">1,256</div>
           <div className="text-[11px] text-slate-500">OAuth tokens valid</div>

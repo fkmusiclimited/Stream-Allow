@@ -115,6 +115,7 @@ const AppContent: React.FC = () => {
           {currentPath === 'admin/dashboard' && <AdminOverviewPage />}
           {currentPath === 'admin/users' && <UserManagementPage />}
           {currentPath === 'admin/streams' && <StreamManagementPage />}
+          {currentPath === 'admin/create-stream' && <CreateStreamPage />}
           {currentPath === 'admin/youtube' && <YouTubeManagementPage />}
           {currentPath === 'admin/playlists' && <AdminPlaylistPage />}
           {currentPath === 'admin/channel-permissions' && <ChannelPermissionsPage />}

@@ -70,10 +70,12 @@ export const PlaylistDetailsPage: React.FC = () => {
   const [isExtractingFrame, setIsExtractingFrame] = useState(false);
   const [frameExtracted, setFrameExtracted] = useState(false);
 
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedFileName, setSelectedFileName] = useState('');
   const [selectedFileSize, setSelectedFileSize] = useState('');
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const videoFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -265,22 +267,43 @@ export const PlaylistDetailsPage: React.FC = () => {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setUploadError(null);
+
+      // Validate video format (MP4, MOV, MKV, WebM)
+      const validExtensions = ['.mp4', '.mov', '.mkv', '.webm'];
+      const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+      if (!validExtensions.includes(ext) && !file.type.startsWith('video/')) {
+        const errorMsg = 'Invalid video format. Supported formats: MP4, MOV, MKV, WebM';
+        setUploadError(errorMsg);
+        showToast(errorMsg, 'error');
+        return;
+      }
+
+      // Validate maximum 2 GB upload size limit
+      const maxSizeBytes = 2 * 1024 * 1024 * 1024;
+      if (file.size > maxSizeBytes) {
+        const errorMsg = 'File is too large. Maximum allowed size is 2 GB.';
+        setUploadError(errorMsg);
+        showToast(errorMsg, 'error');
+        return;
+      }
+
+      setSelectedFile(file);
       setSelectedFileName(file.name);
       setSelectedFileSize((file.size / (1024 * 1024)).toFixed(1) + ' MB');
 
       const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
       setVideoTitle(cleanName);
 
-      // Automatically extract real video thumbnail & duration from this uploaded file
+      // Instant local preview extraction
       setIsExtractingFrame(true);
-      showToast(`Analyzing video "${file.name}" for duration & thumbnail...`, 'info');
+      showToast(`Selected "${file.name}". Ready for real upload & FFprobe analysis.`, 'info');
 
       try {
         const metadata = await extractRealVideoMetadata(file);
         setVideoThumbnail(metadata.thumbnail);
         setVideoDuration(metadata.duration);
         setFrameExtracted(true);
-        showToast(`Video duration (${metadata.duration}) & thumbnail detected automatically!`, 'success');
       } catch {
         const fallbackThumb = generateDynamicVideoFrame(file.name);
         const fallbackDur = estimateDurationFromFileSize(file.size);
@@ -293,52 +316,107 @@ export const PlaylistDetailsPage: React.FC = () => {
     }
   };
 
-  // Submit new video & add to playlist queue WITHOUT restarting live stream
+  // Submit new video & upload real file to backend server via Multer
   const handleUploadVideo = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedFile) {
+      const errorMsg = 'Please choose a video file (MP4, MOV, MKV, or WebM) from your computer.';
+      setUploadError(errorMsg);
+      showToast(errorMsg, 'error');
+      return;
+    }
+
     if (!videoTitle.trim()) {
       showToast('Please enter a video title.', 'error');
       return;
     }
 
-    const finalThumbnail = videoThumbnail || generateDynamicVideoFrame(videoTitle);
-    const finalDuration = videoDuration || '04:15';
-
     setIsUploading(true);
-    setUploadProgress(15);
+    setUploadProgress(0);
+    setUploadError(null);
 
-    const interval = setInterval(() => {
-      setUploadProgress(prev => {
-        if (prev >= 90) {
-          clearInterval(interval);
-          return 95;
+    const formData = new FormData();
+    formData.append('video', selectedFile);
+
+    const token = localStorage.getItem('streamjoin_token');
+    const xhr = new XMLHttpRequest();
+
+    xhr.open('POST', '/api/media/upload');
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    }
+
+    // Real upload progress tracked from actual network bytes transferred
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const percent = Math.min(99, Math.round((event.loaded / event.total) * 100));
+        setUploadProgress(percent);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const res = JSON.parse(xhr.responseText);
+          const uploadedFile = res.file;
+          setUploadProgress(100);
+
+          const finalThumbnail = uploadedFile.thumbnailUrl || videoThumbnail || generateDynamicVideoFrame(videoTitle);
+          const finalDuration = uploadedFile.formattedDuration || videoDuration || '00:00';
+
+          // Add to playlist queue with real server storage path & FFprobe metadata
+          addVideoToPlaylist(playlist.id, {
+            title: videoTitle,
+            duration: finalDuration,
+            durationSeconds: uploadedFile.durationSeconds,
+            resolution: uploadedFile.resolution,
+            format: uploadedFile.format,
+            filePath: uploadedFile.filePath,
+            fileSizeBytes: uploadedFile.fileSizeBytes,
+            url: uploadedFile.url,
+            thumbnail: finalThumbnail
+          });
+
+          showToast(`"${videoTitle}" uploaded & analyzed with FFprobe successfully!`, 'success');
+
+          // Reset modal state
+          setIsUploading(false);
+          setUploadModalOpen(false);
+          setUploadProgress(0);
+          setSelectedFile(null);
+          setVideoTitle('');
+          setSelectedFileName('');
+          setSelectedFileSize('');
+          setVideoThumbnail('');
+          setVideoDuration('');
+          setFrameExtracted(false);
+          setUploadError(null);
+        } catch (err: any) {
+          setIsUploading(false);
+          const parseErr = 'Failed to process server upload response.';
+          setUploadError(parseErr);
+          showToast(parseErr, 'error');
         }
-        return prev + 25;
-      });
-    }, 200);
+      } else {
+        setIsUploading(false);
+        let errorMsg = 'Video upload failed.';
+        try {
+          const errRes = JSON.parse(xhr.responseText);
+          if (errRes.message) errorMsg = errRes.message;
+        } catch {}
+        setUploadError(errorMsg);
+        showToast(errorMsg, 'error');
+      }
+    };
 
-    setTimeout(() => {
-      clearInterval(interval);
-      setUploadProgress(100);
-
-      // Add to playlist queue WITHOUT restarting live stream
-      addVideoToPlaylist(playlist.id, {
-        title: videoTitle,
-        duration: finalDuration,
-        url: videoUrl,
-        thumbnail: finalThumbnail
-      });
-
+    xhr.onerror = () => {
       setIsUploading(false);
-      setUploadModalOpen(false);
-      setUploadProgress(0);
-      setVideoTitle('');
-      setSelectedFileName('');
-      setSelectedFileSize('');
-      setVideoThumbnail('');
-      setVideoDuration('');
-      setFrameExtracted(false);
-    }, 1000);
+      const networkErr = 'Network error occurred during video upload. Please check connection.';
+      setUploadError(networkErr);
+      showToast(networkErr, 'error');
+    };
+
+    xhr.send(formData);
   };
 
   // Handle restarting live broadcast: restarts stream on YouTube and local player from beginning WITHOUT adding any videos
@@ -1058,16 +1136,28 @@ export const PlaylistDetailsPage: React.FC = () => {
                 />
               </div>
 
-              {/* Progress bar when uploading */}
+              {/* Error banner if upload or validation fails */}
+              {uploadError && (
+                <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-start gap-2.5 text-xs text-rose-400">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-500 mt-0.5" />
+                  <span>{uploadError}</span>
+                </div>
+              )}
+
+              {/* Real progress bar when uploading */}
               {isUploading && (
                 <div className="space-y-1.5 p-4 rounded-2xl bg-slate-900 border border-slate-800">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-rose-400">Uploading file to playlist queue...</span>
+                    <span className="font-semibold text-rose-400">
+                      {uploadProgress < 100
+                        ? `Uploading video file to server (${uploadProgress}%)...`
+                        : 'Upload complete! Analyzing video with FFprobe...'}
+                    </span>
                     <span className="font-mono text-white">{uploadProgress}%</span>
                   </div>
                   <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
                     <div
-                      className="bg-gradient-to-r from-[#FF1B6B] to-emerald-400 h-full rounded-full transition-all duration-300"
+                      className="bg-gradient-to-r from-[#FF1B6B] to-emerald-400 h-full rounded-full transition-all duration-150"
                       style={{ width: `${uploadProgress}%` }}
                     />
                   </div>

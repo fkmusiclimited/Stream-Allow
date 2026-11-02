@@ -162,7 +162,7 @@ export const UserLayout: React.FC<UserLayoutProps> = ({ children }) => {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Admin Impersonation Notice Banner */}
-        {adminImpersonatorUser && (
+        {(adminImpersonatorUser || currentUser?.role === 'super_admin' || currentUser?.role === 'admin') && (
           <div className="bg-gradient-to-r from-rose-950 via-slate-900 to-rose-950 border-b border-rose-500/50 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs sticky top-0 z-40 shadow-lg">
             <div className="flex items-center gap-2 text-rose-200">
               <span className="relative flex h-2 w-2">
@@ -174,15 +174,21 @@ export const UserLayout: React.FC<UserLayoutProps> = ({ children }) => {
                 Admin Session
               </span>
               <span className="text-slate-300">
-                Visiting user <strong>{currentUser?.name}</strong> ({currentUser?.email})
+                Viewing User Dashboard (<strong>{currentUser?.name}</strong> - {currentUser?.email})
               </span>
             </div>
             <button
-              onClick={exitImpersonation}
+              onClick={() => {
+                if (adminImpersonatorUser) {
+                  exitImpersonation();
+                } else {
+                  navigate('admin/dashboard');
+                }
+              }}
               className="px-3 py-1 rounded-lg bg-gradient-to-r from-[#FF1B6B] to-[#E11D48] hover:opacity-90 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-rose-600/30 transition-all cursor-pointer transform active:scale-95"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Return to Admin Account</span>
+              <span>Return to Super Admin</span>
             </button>
           </div>
         )}
@@ -213,15 +219,21 @@ export const UserLayout: React.FC<UserLayoutProps> = ({ children }) => {
 
           <div className="flex items-center gap-3">
 
-            {/* Return to Admin Button in Header (Visible ONLY when Admin is visiting user account) */}
-            {adminImpersonatorUser && (
+            {/* Return to Admin Button in Header (Visible when Admin is visiting user account or admin navigating) */}
+            {(adminImpersonatorUser || currentUser?.role === 'super_admin' || currentUser?.role === 'admin') && (
               <button
-                onClick={exitImpersonation}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/60 text-rose-300 border border-rose-500/40 text-xs font-bold transition-colors cursor-pointer"
-                title="Return to Admin Control"
+                onClick={() => {
+                  if (adminImpersonatorUser) {
+                    exitImpersonation();
+                  } else {
+                    navigate('admin/dashboard');
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-[#FF1B6B] to-[#E11D48] text-white text-xs font-bold transition-all shadow-md shadow-rose-600/30 cursor-pointer"
+                title="Return to Admin Panel"
               >
-                <ArrowLeft className="w-3.5 h-3.5 text-rose-400" />
-                <span className="hidden sm:inline">Return to Admin</span>
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>&gt; Super Admin &lt;</span>
               </button>
             )}
 

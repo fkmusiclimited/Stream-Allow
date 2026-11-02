@@ -34,8 +34,8 @@ export const StreamManagementPage: React.FC = () => {
           <p className="text-xs text-slate-400">Manage live, scheduled and completed streams platform-wide.</p>
         </div>
         <button
-          onClick={() => navigate('user/create-stream')}
-          className="px-5 py-2.5 rounded-xl font-bold text-xs text-white gradient-brand hover:opacity-95 shadow-lg shadow-rose-600/25 flex items-center gap-2 transition-all"
+          onClick={() => navigate('admin/create-stream')}
+          className="px-5 py-2.5 rounded-xl font-bold text-xs text-white gradient-brand hover:opacity-95 shadow-lg shadow-rose-600/25 flex items-center gap-2 transition-all cursor-pointer"
         >
           <PlusCircle className="w-4 h-4" />
           <span>Create Stream</span>

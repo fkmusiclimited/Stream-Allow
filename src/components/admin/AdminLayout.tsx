@@ -99,7 +99,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         <nav className="p-3 space-y-1 flex-1">
           {adminNavItems.map((item) => {
             const Icon = item.icon;
-            const isActive = currentPath === item.path;
+            const isActive = currentPath === item.path || (item.path === 'admin/streams' && currentPath === 'admin/create-stream');
 
             return (
               <button
@@ -161,7 +161,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           </div>
 
           <div className="flex items-center gap-3">
-
             {/* Admin Profile */}
             <div className="relative">
               <button
@@ -231,18 +230,21 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
               </div>
 
               <div className="flex-1 overflow-y-auto py-3 space-y-1">
-                {adminNavItems.map(item => (
-                  <button
-                    key={item.path}
-                    onClick={() => handleNav(item.path)}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold ${
-                      currentPath === item.path ? 'bg-[#FF1B6B] text-white' : 'text-slate-400 hover:bg-slate-800'
-                    }`}
-                  >
-                    <item.icon className="w-4 h-4" />
-                    <span>{item.label}</span>
-                  </button>
-                ))}
+                {adminNavItems.map(item => {
+                  const isActive = currentPath === item.path || (item.path === 'admin/streams' && currentPath === 'admin/create-stream');
+                  return (
+                    <button
+                      key={item.path}
+                      onClick={() => handleNav(item.path)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold ${
+                        isActive ? 'bg-[#FF1B6B] text-white' : 'text-slate-400 hover:bg-slate-800'
+                      }`}
+                    >
+                      <item.icon className="w-4 h-4" />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>

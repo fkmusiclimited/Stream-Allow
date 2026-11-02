@@ -65,7 +65,12 @@ export interface PlaylistItem {
     id: string;
     title: string;
     duration: string;
+    durationSeconds?: number;
+    resolution?: string;
+    format?: string;
     url: string;
+    filePath?: string;
+    fileSizeBytes?: number;
     thumbnail: string;
   }[];
 }

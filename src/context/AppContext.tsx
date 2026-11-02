@@ -59,6 +59,7 @@ interface AppContextType {
 
   // Data collections & mutations
   users: User[];
+  fetchUsers: () => Promise<User[] | undefined>;
   addUser: (user: Partial<User>) => void;
   updateUserStatus: (id: string, status: 'Active' | 'Suspended') => void;
   renewUserPlan: (id: string, days?: number) => void;
@@ -77,8 +78,28 @@ interface AppContextType {
   openPlaylistDetails: (id: string) => void;
   addPlaylist: (playlist: Omit<PlaylistItem, 'id' | 'createdAt'>) => void;
   deletePlaylist: (id: string) => void;
-  addVideoToPlaylist: (playlistId: string, video: { title: string; duration: string; url: string; thumbnail: string }) => void;
-  addVideoToPlaylistAndRestartLive: (playlistId: string, video: { title: string; duration: string; url: string; thumbnail: string }) => void;
+  addVideoToPlaylist: (playlistId: string, video: {
+    title: string;
+    duration: string;
+    url: string;
+    thumbnail: string;
+    filePath?: string;
+    resolution?: string;
+    format?: string;
+    durationSeconds?: number;
+    fileSizeBytes?: number;
+  }) => void;
+  addVideoToPlaylistAndRestartLive: (playlistId: string, video: {
+    title: string;
+    duration: string;
+    url: string;
+    thumbnail: string;
+    filePath?: string;
+    resolution?: string;
+    format?: string;
+    durationSeconds?: number;
+    fileSizeBytes?: number;
+  }) => void;
   restartLiveBroadcast: (playlistId: string, trackIndex?: number) => void;
   removeVideoFromPlaylist: (playlistId: string, videoId: string) => void;
   streamRestartState: { isRestarting: boolean; streamTitle: string; updatedVideoTitle: string } | null;
@@ -217,6 +238,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('Failed to cache users:', e);
     }
   }, [users]);
+
+  // Synchronize users from PostgreSQL backend database
+  const fetchUsers = async (): Promise<User[] | undefined> => {
+    try {
+      const token = localStorage.getItem('streamjoin_token');
+      const headers: Record<string, string> = {
+        'x-admin-role': 'super_admin'
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const res = await fetch('/api/admin/users', { headers });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.users) && data.users.length > 0) {
+          setUsers(prev => {
+            const serverUsers: User[] = data.users;
+            const serverEmails = new Set(serverUsers.map(u => (u.email || '').toLowerCase()));
+            const localOnly = prev.filter(u => !serverEmails.has((u.email || '').toLowerCase()));
+            const merged = [...serverUsers, ...localOnly];
+            try {
+              localStorage.setItem('streamjoin_users_data', JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
+          return data.users;
+        }
+      }
+    } catch (err) {
+      console.warn('[PostgreSQL Users Sync] Error:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  useEffect(() => {
+    if (currentPath === 'admin/users' || currentPath === 'admin/dashboard' || currentPath === 'admin/streams') {
+      fetchUsers();
+    }
+  }, [currentPath]);
   const [streams, setStreams] = useState<StreamItem[]>(INITIAL_STREAMS);
   const [playlists, setPlaylists] = useState<PlaylistItem[]>(INITIAL_PLAYLISTS);
   const [channels, setChannels] = useState<YouTubeChannel[]>(INITIAL_CHANNELS);
@@ -487,13 +550,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Registration successful! Please activate a plan to start live broadcasting.', 'info');
     logActivity('New User Registration (Plan Inactive)', 'user');
 
-    // Also register on backend API asynchronously if server available
+    // Also register on backend API asynchronously so user is persisted in PostgreSQL
     try {
       fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newUser.name, email: newUser.email, password: trimmedPass })
-      }).catch(() => {});
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.token) {
+          localStorage.setItem('streamjoin_token', data.token);
+        }
+        fetchUsers();
+      })
+      .catch((err) => {
+        console.warn('Backend registration notice:', err);
+      });
     } catch (e) {
       // ignore
     }
@@ -533,6 +606,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setUsers(prev => [user, ...prev]);
     showToast(`User ${user.name} added successfully!`, 'success');
     logActivity(`Created user ${user.email}`, 'admin');
+
+    // Persist to PostgreSQL backend
+    try {
+      fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: user.name, email: user.email, password: user.password || 'user123' })
+      })
+      .then(() => fetchUsers())
+      .catch(() => {});
+    } catch (e) {}
   };
 
   const renewUserPlan = (id: string, days: number = 30) => {
@@ -616,10 +700,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Stream "${newStream.title}" created successfully!`, 'success');
     logActivity(`Created stream: ${newStream.title}`, 'user');
 
-    // Sync with backend API
+    // Sync with backend API with JWT Authorization header
+    const token = localStorage.getItem('streamjoin_token');
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     fetch('/api/streams', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         title: newStream.title,
         playlistId: newStream.playlistId,
@@ -629,7 +719,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resolution: newStream.resolution,
         bitrate: newStream.bitrate
       })
-    }).catch(() => {});
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.success && data.stream?.id) {
+        if (newStream.status === 'live') {
+          fetch(`/api/streams/${data.stream.id}/start`, { method: 'POST', headers }).catch(() => {});
+        }
+      }
+    })
+    .catch(() => {});
   };
 
   const updateStreamStatus = (id: string, status: StreamItem['status']) => {
@@ -643,10 +742,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Stream status set to ${status.toUpperCase()}`, 'info');
     logActivity(`Updated stream status to ${status}`, 'user');
 
+    const token = localStorage.getItem('streamjoin_token');
+    const authHeaders: Record<string, string> = {};
+    if (token) {
+      authHeaders['Authorization'] = `Bearer ${token}`;
+    }
+
     if (status === 'live') {
-      fetch(`/api/streams/${id}/start`, { method: 'POST' }).catch(() => {});
+      fetch(`/api/streams/${id}/start`, { method: 'POST', headers: authHeaders }).catch(() => {});
     } else if (status === 'ended' || status === 'failed') {
-      fetch(`/api/streams/${id}/stop`, { method: 'POST' }).catch(() => {});
+      fetch(`/api/streams/${id}/stop`, { method: 'POST', headers: authHeaders }).catch(() => {});
     }
   };
 
@@ -675,7 +780,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addVideoToPlaylist = (
     playlistId: string,
-    newVideo: { title: string; duration: string; url: string; thumbnail: string }
+    newVideo: {
+      title: string;
+      duration: string;
+      url: string;
+      thumbnail: string;
+      filePath?: string;
+      resolution?: string;
+      format?: string;
+      durationSeconds?: number;
+      fileSizeBytes?: number;
+    }
   ) => {
     const videoItem = {
       ...newVideo,
@@ -693,13 +808,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return p;
     }));
 
+    // Persist to backend server API
+    const token = localStorage.getItem('streamjoin_token');
+    if (token) {
+      fetch(`/api/playlists/${playlistId}/videos`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(videoItem)
+      }).catch(err => console.warn('Failed to sync video to backend playlist:', err));
+    }
+
     showToast(`Video "${newVideo.title}" added to playlist queue!`, 'success');
     logActivity(`Added video "${newVideo.title}" to playlist`, 'user');
   };
 
   const addVideoToPlaylistAndRestartLive = (
     playlistId: string,
-    newVideo: { title: string; duration: string; url: string; thumbnail: string }
+    newVideo: {
+      title: string;
+      duration: string;
+      url: string;
+      thumbnail: string;
+      filePath?: string;
+      resolution?: string;
+      format?: string;
+      durationSeconds?: number;
+      fileSizeBytes?: number;
+    }
   ) => {
     const videoItem = {
       ...newVideo,
@@ -717,6 +855,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return p;
     }));
+
+    // Persist to backend server API
+    const token = localStorage.getItem('streamjoin_token');
+    if (token) {
+      fetch(`/api/playlists/${playlistId}/videos`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(videoItem)
+      }).catch(err => console.warn('Failed to sync video to backend playlist:', err));
+    }
 
     // Find stream using this playlist or primary active live stream
     const targetStream = streams.find(s => s.playlistId === playlistId && s.status === 'live') ||
@@ -778,7 +929,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Notify backend Express / FFmpeg engine if targetStream exists
     if (targetStream) {
-      fetch(`/api/streams/${targetStream.id}/restart`, { method: 'POST' }).catch(() => {});
+      const token = localStorage.getItem('streamjoin_token');
+      const authHeaders: Record<string, string> = {};
+      if (token) {
+        authHeaders['Authorization'] = `Bearer ${token}`;
+      }
+      fetch(`/api/streams/${targetStream.id}/restart`, { method: 'POST', headers: authHeaders }).catch(() => {});
     }
 
     setTimeout(() => {
@@ -1073,6 +1229,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         register,
         logout,
         users,
+        fetchUsers,
         addUser,
         updateUserStatus,
         renewUserPlan,

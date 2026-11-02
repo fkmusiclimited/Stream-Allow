@@ -14,16 +14,30 @@ import {
   HardDrive,
   Clock,
   AlertCircle,
-  Calendar
+  Calendar,
+  RefreshCw
 } from 'lucide-react';
 import { User } from '../../types';
 
 export const UserManagementPage: React.FC = () => {
-  const { users, addUser, updateUserStatus, renewUserPlan, expireUserPlan, impersonateUser, showToast } = useApp();
+  const { users, fetchUsers, addUser, updateUserStatus, renewUserPlan, expireUserPlan, impersonateUser, showToast } = useApp();
   const [search, setSearch] = useState('');
   const [planFilter, setPlanFilter] = useState('All');
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [actionMenuId, setActionMenuId] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Sync users from PostgreSQL database on component load
+  React.useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    await fetchUsers();
+    setIsRefreshing(false);
+    showToast('User list synced with PostgreSQL database!', 'info');
+  };
 
   // New user form
   const [newName, setNewName] = useState('');
@@ -90,13 +104,25 @@ export const UserManagementPage: React.FC = () => {
           <h1 className="text-2xl font-extrabold text-white">All Users</h1>
           <p className="text-xs text-slate-400">Manage all registered creators and their live stream subscription plans.</p>
         </div>
-        <button
-          onClick={() => setAddModalOpen(true)}
-          className="px-5 py-2.5 rounded-xl font-bold text-xs text-white gradient-brand hover:opacity-95 shadow-lg shadow-rose-600/25 flex items-center gap-2 transition-all transform active:scale-95 cursor-pointer"
-        >
-          <PlusCircle className="w-4 h-4" />
-          <span>Add User</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="px-3.5 py-2.5 rounded-xl text-xs font-semibold bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
+            title="Sync with PostgreSQL database"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-[#FF1B6B] ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing ? 'Syncing...' : 'Refresh DB'}</span>
+          </button>
+
+          <button
+            onClick={() => setAddModalOpen(true)}
+            className="px-5 py-2.5 rounded-xl font-bold text-xs text-white gradient-brand hover:opacity-95 shadow-lg shadow-rose-600/25 flex items-center gap-2 transition-all transform active:scale-95 cursor-pointer"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>Add User</span>
+          </button>
+        </div>
       </div>
 
       {/* 4 Stat Boxes: Total Users, Plan Active, Paid Users, Plan Expire */}

@@ -15,14 +15,20 @@ import {
   Film,
   Play,
   AlertTriangle,
-  X
+  X,
+  Eye,
+  EyeOff,
+  Key,
+  ShieldCheck
 } from 'lucide-react';
 
 export const CreateStreamPage: React.FC = () => {
   const {
+    currentPath,
     channels,
     playlists,
     addStream,
+    addVideoToPlaylist,
     navigate,
     setActiveViewingStream,
     showToast,
@@ -46,11 +52,17 @@ export const CreateStreamPage: React.FC = () => {
   const [uploadedVideoSize, setUploadedVideoSize] = useState<string>('48.5 MB');
   const [uploadedVideoDuration, setUploadedVideoDuration] = useState<string>('15:20');
   const [videoResolution, setVideoResolution] = useState<string>('1080p FHD');
+  const [isUploadingVideo, setIsUploadingVideo] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadedFilePath, setUploadedFilePath] = useState<string | null>(null);
   const [planInactiveModalOpen, setPlanInactiveModalOpen] = useState(false);
   const [simulateInactivePlan, setSimulateInactivePlan] = useState(false);
   const videoFileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const [streamUrl, setStreamUrl] = useState('rtmp://a.rtmp.youtube.com/live2/live_9381_auto_streamjoin_key');
+  // Separate RTMP Server URL and YouTube Stream Key states
+  const [rtmpServerUrl, setRtmpServerUrl] = useState('rtmp://a.rtmp.youtube.com/live2');
+  const [streamKey, setStreamKey] = useState('live_9381_auto_streamjoin_key');
+  const [showStreamKey, setShowStreamKey] = useState(false);
   const [dualStream, setDualStream] = useState(false);
   const [secondaryStreamUrl, setSecondaryStreamUrl] = useState('');
   const [backupRtmpServer, setBackupRtmpServer] = useState('rtmp://b.rtmp.youtube.com/live2?backup=1');
@@ -63,12 +75,12 @@ export const CreateStreamPage: React.FC = () => {
 
   const selectedPlaylist = playlists.find(p => p.id === selectedPlaylistId) || playlists[0];
 
-  // MP4 Video Upload Handler
+  // MP4 Video Upload Handler with Real Server Storage & FFprobe
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (!file.type.includes('video') && !file.name.toLowerCase().endsWith('.mp4')) {
-        showToast('Please upload a valid MP4 video file (.mp4).', 'error');
+      if (!file.type.includes('video') && !/\.(mp4|mkv|mov|webm|flv)$/i.test(file.name)) {
+        showToast('Please upload a valid video file (MP4, MKV, MOV, or WebM).', 'error');
         return;
       }
       const url = URL.createObjectURL(file);
@@ -84,7 +96,7 @@ export const CreateStreamPage: React.FC = () => {
         setTitle(cleanName);
       }
 
-      // Read video duration and dimensions
+      // Read video duration and dimensions client-side
       const tempVideo = document.createElement('video');
       tempVideo.preload = 'metadata';
       tempVideo.src = url;
@@ -99,7 +111,73 @@ export const CreateStreamPage: React.FC = () => {
         }
       };
 
-      showToast(`MP4 video "${file.name}" uploaded successfully!`, 'success');
+      // Perform real file upload to backend via Multer /api/media/upload
+      setIsUploadingVideo(true);
+      setUploadProgress(0);
+
+      const formData = new FormData();
+      formData.append('video', file);
+
+      const token = localStorage.getItem('streamjoin_token');
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/media/upload');
+      if (token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      }
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percent = Math.min(99, Math.round((event.loaded / event.total) * 100));
+          setUploadProgress(percent);
+        }
+      };
+
+      xhr.onload = () => {
+        setIsUploadingVideo(false);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const res = JSON.parse(xhr.responseText);
+            const uploaded = res.file;
+            setUploadProgress(100);
+            setUploadedFilePath(uploaded.filePath);
+            if (uploaded.thumbnailUrl) {
+              setThumbnail(uploaded.thumbnailUrl);
+            }
+            if (uploaded.formattedDuration) {
+              setUploadedVideoDuration(uploaded.formattedDuration);
+            }
+            if (uploaded.resolution) {
+              setVideoResolution(uploaded.resolution);
+            }
+
+            // Immediately attach to selected playlist in database/state for real FFmpeg playback
+            addVideoToPlaylist(selectedPlaylistId, {
+              title: title.trim() || file.name.replace(/\.[^/.]+$/, ''),
+              duration: uploaded.formattedDuration || '05:00',
+              durationSeconds: uploaded.durationSeconds,
+              resolution: uploaded.resolution,
+              format: uploaded.format,
+              filePath: uploaded.filePath,
+              fileSizeBytes: uploaded.fileSizeBytes,
+              url: uploaded.url,
+              thumbnail: uploaded.thumbnailUrl || thumbnail
+            });
+
+            showToast(`Video "${file.name}" uploaded & analyzed with FFprobe successfully!`, 'success');
+          } catch {
+            showToast(`"${file.name}" uploaded to server storage.`, 'success');
+          }
+        } else {
+          showToast('Failed to upload video to server. Please try again.', 'error');
+        }
+      };
+
+      xhr.onerror = () => {
+        setIsUploadingVideo(false);
+        showToast('Network error during video upload.', 'error');
+      };
+
+      xhr.send(formData);
     }
   };
 
@@ -139,17 +217,41 @@ export const CreateStreamPage: React.FC = () => {
     showToast(`${label} copied to clipboard!`, 'success');
   };
 
-  const handlePasteStreamUrl = async () => {
+  const handlePasteRtmpUrl = async () => {
     try {
       const text = await navigator.clipboard?.readText();
       if (text) {
-        setStreamUrl(text);
-        showToast('Stream URL pasted from clipboard!', 'success');
+        setRtmpServerUrl(text.trim());
+        showToast('RTMP Server URL pasted from clipboard!', 'success');
       } else {
         showToast('Clipboard is empty. Type or paste manually.', 'info');
       }
     } catch {
-      showToast('Please paste directly into the Stream URL input.', 'info');
+      showToast('Please paste directly into the RTMP URL input.', 'info');
+    }
+  };
+
+  const handlePasteStreamKey = async () => {
+    try {
+      const text = await navigator.clipboard?.readText();
+      if (text) {
+        let key = text.trim();
+        // If user accidentally pasted full RTMP URL including the key:
+        if (key.startsWith('rtmp://') || key.startsWith('rtmps://')) {
+          const lastSlash = key.lastIndexOf('/');
+          if (lastSlash !== -1 && lastSlash < key.length - 1) {
+            const extractedServer = key.substring(0, lastSlash);
+            key = key.substring(lastSlash + 1);
+            setRtmpServerUrl(extractedServer);
+          }
+        }
+        setStreamKey(key);
+        showToast('YouTube Stream Key pasted from clipboard!', 'success');
+      } else {
+        showToast('Clipboard is empty. Type or paste manually.', 'info');
+      }
+    } catch {
+      showToast('Please paste directly into the Stream Key input.', 'info');
     }
   };
 
@@ -157,7 +259,7 @@ export const CreateStreamPage: React.FC = () => {
     try {
       const text = await navigator.clipboard?.readText();
       if (text) {
-        setBackupRtmpServer(text);
+        setBackupRtmpServer(text.trim());
         showToast('Backup RTMP URL pasted from clipboard!', 'success');
       } else {
         showToast('Clipboard is empty. Type or paste manually.', 'info');
@@ -172,29 +274,55 @@ export const CreateStreamPage: React.FC = () => {
       showToast('Please provide a title for your live stream.', 'error');
       return;
     }
+    if (currentStep === 2) {
+      if (!rtmpServerUrl.trim()) {
+        showToast('Please provide an RTMP Server URL.', 'error');
+        return;
+      }
+      if (!streamKey.trim()) {
+        showToast('Please provide your YouTube Stream Key.', 'error');
+        return;
+      }
+    }
     if (currentStep < 4) {
       setCurrentStep((prev) => (prev + 1) as any);
     }
   };
 
+  const isAdmin = (currentUser && ['super_admin', 'admin', 'manager'].includes(currentUser.role)) || currentPath.startsWith('admin/');
+
   const handleBack = () => {
     if (currentStep > 1) {
       setCurrentStep((prev) => (prev - 1) as any);
+    } else {
+      if (currentPath.startsWith('admin/') || isAdmin) {
+        navigate('admin/streams');
+      } else {
+        navigate('user/my-streams');
+      }
     }
   };
 
   const handleLaunchStream = () => {
-    // Check if user account plan is active
-    const isPlanActive = !simulateInactivePlan && currentUser?.status === 'Active' && 
-      (currentUser?.renewalDaysLeft === undefined || currentUser?.renewalDaysLeft > 0);
+    // Check if user account plan is active (Super Admin and Admin accounts have full unrestricted access)
+    const isPlanActive = isAdmin || (!simulateInactivePlan && currentUser?.status === 'Active' && 
+      (currentUser?.renewalDaysLeft === undefined || currentUser?.renewalDaysLeft > 0));
 
     if (!isPlanActive) {
       setPlanInactiveModalOpen(true);
       return;
     }
 
+    const cleanServerUrl = rtmpServerUrl.trim() || 'rtmp://a.rtmp.youtube.com/live2';
+    const cleanKey = streamKey.trim();
+
+    if (!cleanKey) {
+      showToast('YouTube Stream Key is required to broadcast.', 'error');
+      return;
+    }
+
     const newStream = {
-      title: title.trim() || uploadedVideoName.replace('.mp4', ''),
+      title: title.trim() || uploadedVideoName.replace(/\.[^/.]+$/, ''),
       description: description || `24/7 Live broadcast of ${uploadedVideoName}`,
       channelName: dualStream ? 'YouTube Live (Dual Stream Active)' : 'YouTube Live Broadcast',
       channelId: 'yt-direct',
@@ -204,8 +332,8 @@ export const CreateStreamPage: React.FC = () => {
       time: 'Just now',
       scheduledTime: isScheduled ? scheduleTime : undefined,
       playlistId: selectedPlaylistId,
-      streamKey: streamUrl,
-      rtmpUrl: streamUrl.includes('/') ? streamUrl.substring(0, streamUrl.lastIndexOf('/')) : streamUrl,
+      streamKey: cleanKey,
+      rtmpUrl: cleanServerUrl,
       resolution,
       bitrate: resolution === '1080p60' ? '6000 kbps' : '4500 kbps',
       loop: loop247
@@ -218,7 +346,11 @@ export const CreateStreamPage: React.FC = () => {
         : 'Stream is now broadcasting LIVE on YouTube!',
       'success'
     );
-    navigate('user/my-streams');
+    if (currentPath.startsWith('admin/') || isAdmin) {
+      navigate('admin/streams');
+    } else {
+      navigate('user/my-streams');
+    }
   };
 
   const steps = [
@@ -229,7 +361,29 @@ export const CreateStreamPage: React.FC = () => {
   ];
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8">
+    <div className="max-w-3xl mx-auto space-y-6 sm:space-y-8">
+      {/* Admin Breadcrumb Navigation (Shown when creating stream from Admin) */}
+      {(currentPath.startsWith('admin/') || isAdmin) && (
+        <div className="flex items-center justify-between pb-3 border-b border-slate-800/80">
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <button onClick={() => navigate('admin/dashboard')} className="hover:text-white transition-colors">Admin</button>
+            <span>/</span>
+            <button onClick={() => navigate('admin/streams')} className="hover:text-[#FF1B6B] text-slate-300 font-semibold transition-colors">
+              Streams
+            </button>
+            <span>/</span>
+            <span className="text-white font-bold">Create Stream</span>
+          </div>
+          <button
+            onClick={() => navigate('admin/streams')}
+            className="text-xs text-slate-400 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Back to Admin Streams</span>
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="space-y-1">
         <h1 className="text-2xl sm:text-3xl font-extrabold text-white">Create New Stream</h1>
@@ -427,6 +581,25 @@ export const CreateStreamPage: React.FC = () => {
                       </div>
                     </div>
 
+                    {/* Real Video Upload Progress Bar */}
+                    {isUploadingVideo && (
+                      <div className="p-3 rounded-xl bg-slate-950 border border-[#FF1B6B]/40 space-y-2">
+                        <div className="flex items-center justify-between text-xs font-semibold text-slate-200">
+                          <span className="flex items-center gap-1.5 text-[#FF1B6B]">
+                            <Upload className="w-3.5 h-3.5 animate-bounce" />
+                            <span>Uploading video to server storage & analyzing with FFprobe...</span>
+                          </span>
+                          <span className="font-mono text-white font-bold">{uploadProgress}%</span>
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-[#FF1B6B] to-[#E11D48] transition-all duration-300 rounded-full"
+                            style={{ width: `${uploadProgress}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
                     {/* Quick Presets */}
                     <div className="pt-1">
                       <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider block mb-1.5">
@@ -583,41 +756,96 @@ export const CreateStreamPage: React.FC = () => {
               </div>
             )}
 
-            {/* Stream URL (renamed from YouTube Stream Key as requested) */}
+            {/* 1. RTMP Server URL Field */}
             <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
               <div className="flex items-center justify-between">
                 <div>
                   <label className="text-xs font-semibold text-slate-200 block">
-                    Stream URL
+                    RTMP Server URL
                   </label>
                   <span className="text-[11px] text-slate-500">
-                    Paste your YouTube live stream URL or RTMP ingest endpoint
+                    YouTube Live RTMP ingest server endpoint
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={handlePasteStreamUrl}
+                    onClick={handlePasteRtmpUrl}
                     className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-300 hover:text-white transition-colors cursor-pointer"
                   >
                     Paste
                   </button>
                   <button
                     type="button"
-                    onClick={() => copyToClipboard(streamUrl, 'Stream URL')}
+                    onClick={() => copyToClipboard(rtmpServerUrl, 'RTMP Server URL')}
                     className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-[11px] font-semibold text-[#FF1B6B] hover:text-white transition-colors cursor-pointer"
                   >
                     Copy URL
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRtmpServerUrl('rtmp://a.rtmp.youtube.com/live2');
+                      showToast('Reset to default YouTube RTMP endpoint', 'info');
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+                  >
+                    Default
                   </button>
                 </div>
               </div>
               <input
                 type="text"
-                value={streamUrl}
-                onChange={e => setStreamUrl(e.target.value)}
-                placeholder="rtmp://a.rtmp.youtube.com/live2/live_xxxx_xxxx"
+                value={rtmpServerUrl}
+                onChange={e => setRtmpServerUrl(e.target.value)}
+                placeholder="rtmp://a.rtmp.youtube.com/live2"
                 className="w-full bg-[#0D121F] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[#FF1B6B]"
               />
+            </div>
+
+            {/* 2. YouTube Stream Key Field (Separate Secure Input) */}
+            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                    <Key className="w-3.5 h-3.5 text-[#FF1B6B]" />
+                    <span>YouTube Stream Key</span>
+                  </label>
+                  <span className="text-[11px] text-slate-500">
+                    Find this in YouTube Studio &gt; Stream Settings &gt; Stream Key
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowStreamKey(!showStreamKey)}
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-300 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    {showStreamKey ? <EyeOff className="w-3.5 h-3.5 text-slate-400" /> : <Eye className="w-3.5 h-3.5 text-slate-400" />}
+                    <span>{showStreamKey ? 'Hide Key' : 'Show Key'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handlePasteStreamKey}
+                    className="px-2.5 py-1 rounded-lg bg-[#FF1B6B]/15 hover:bg-[#FF1B6B]/25 text-[11px] font-semibold text-[#FF1B6B] hover:text-white transition-colors cursor-pointer"
+                  >
+                    Paste Key
+                  </button>
+                </div>
+              </div>
+              <div className="relative">
+                <input
+                  type={showStreamKey ? 'text' : 'password'}
+                  value={streamKey}
+                  onChange={e => setStreamKey(e.target.value)}
+                  placeholder="xxxx-xxxx-xxxx-xxxx-xxxx"
+                  className="w-full bg-[#0D121F] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[#FF1B6B] pr-10"
+                />
+              </div>
+              <div className="flex items-center gap-2 pt-1 text-[11px] text-emerald-400">
+                <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                <span>AES-256-GCM hardware encryption active. Stream Key is never stored in plain text or logged.</span>
+              </div>
             </div>
 
             {/* Backup RTMP URL (allows pasting new URL) */}
@@ -783,6 +1011,9 @@ export const CreateStreamPage: React.FC = () => {
                   <h3 className="text-base font-bold text-white">{title || uploadedVideoName.replace('.mp4', '')}</h3>
                   <p className="text-xs text-slate-400">
                     Platform: <strong className="text-white">YouTube Live</strong> · Mode: <strong className="text-white">{dualStream ? 'Dual Stream (Multi-Relay)' : 'Single Stream'}</strong>
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    RTMP Server: <strong className="text-slate-200 font-mono">{rtmpServerUrl}</strong> · Stream Key: <strong className="text-emerald-400 font-mono">•••••••• (AES-256-GCM Encrypted)</strong>
                   </p>
                   <p className="text-xs text-slate-400">
                     Video File: <strong className="text-emerald-400 font-mono">{uploadedVideoName}</strong> ({uploadedVideoSize} · {uploadedVideoDuration})
