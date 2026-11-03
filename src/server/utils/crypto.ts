@@ -18,50 +18,64 @@ export interface EncryptedData {
 }
 
 /**
- * Checks if the encryption subsystem has a configured secret.
+ * Validates that ENCRYPTION_SECRET is present and robust on server start.
+ * Aborts startup immediately if missing to avoid unencrypted or failed operations.
  */
-export function isEncryptionConfigured(): boolean {
-  return Boolean(process.env.ENCRYPTION_SECRET);
+export function validateEncryptionConfig() {
+  const secret = process.env.ENCRYPTION_SECRET;
+  if (!secret || secret.trim().length < 16) {
+    console.error('[FATAL SECURITY ERROR] ENCRYPTION_SECRET environment variable is missing or too weak (min 16 characters required).');
+    console.error('Server cannot start securely without a configured ENCRYPTION_SECRET. Aborting startup.');
+    process.exit(1);
+  }
 }
 
 /**
  * Encrypts sensitive credentials like YouTube RTMP Stream Keys using AES-256-GCM.
- * Halts safely if ENCRYPTION_SECRET is missing.
+ * Throws an explicit error if encryption fails, never returning empty ciphertext to prevent database corruption.
  */
 export function encryptStreamKey(plainText: string): EncryptedData {
-  if (!plainText) {
-    return { cipherText: '', iv: '', authTag: '' };
+  if (!plainText || plainText.trim() === '') {
+    throw new Error('Cannot encrypt empty or blank stream key.');
   }
-  if (!process.env.ENCRYPTION_SECRET) {
-    console.warn('[SECURITY NOTICE] Cannot encrypt stream key: ENCRYPTION_SECRET environment variable is missing.');
-    return { cipherText: '', iv: '', authTag: '' };
-  }
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv('aes-256-gcm', getMasterKey(), iv);
-  
-  let encrypted = cipher.update(plainText, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  const authTag = cipher.getAuthTag().toString('hex');
 
-  return {
-    cipherText: encrypted,
-    iv: iv.toString('hex'),
-    authTag: authTag
-  };
+  const secret = process.env.ENCRYPTION_SECRET;
+  if (!secret) {
+    throw new Error('[FATAL SECURITY ERROR] Missing ENCRYPTION_SECRET environment variable.');
+  }
+
+  try {
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-gcm', getMasterKey(), iv);
+    
+    let encrypted = cipher.update(plainText.trim(), 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const authTag = cipher.getAuthTag().toString('hex');
+
+    return {
+      cipherText: encrypted,
+      iv: iv.toString('hex'),
+      authTag: authTag
+    };
+  } catch (err: any) {
+    console.error('[Crypto Engine] AES-256-GCM encryption failure:', err.message);
+    throw new Error(`Encryption failed: ${err.message}`);
+  }
 }
 
 /**
  * Decrypts encrypted RTMP Stream Keys in memory before passing to FFmpeg child process.
- * Halts safely if ENCRYPTION_SECRET is missing.
+ * Throws an error if decryption fails or authentication tag does not match.
  */
 export function decryptStreamKey(cipherText: string, ivHex: string, authTagHex: string): string {
   if (!cipherText || !ivHex || !authTagHex) {
-    return '';
+    throw new Error('Incomplete encryption payload provided for decryption.');
   }
-  if (!process.env.ENCRYPTION_SECRET) {
-    console.warn('[SECURITY NOTICE] Cannot decrypt stream key: ENCRYPTION_SECRET environment variable is missing.');
-    return '';
+  const secret = process.env.ENCRYPTION_SECRET;
+  if (!secret) {
+    throw new Error('[FATAL SECURITY ERROR] Missing ENCRYPTION_SECRET environment variable.');
   }
+
   try {
     const iv = Buffer.from(ivHex, 'hex');
     const authTag = Buffer.from(authTagHex, 'hex');
@@ -71,8 +85,18 @@ export function decryptStreamKey(cipherText: string, ivHex: string, authTagHex: 
     let decrypted = decipher.update(cipherText, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
     return decrypted;
-  } catch (err) {
-    console.error('Failed to decrypt stream key:', err);
-    return '';
+  } catch (err: any) {
+    console.error('[Crypto Engine] AES-256-GCM decryption failed:', err.message);
+    throw new Error(`Decryption failed: authentication tag mismatch or corrupted ciphertext (${err.message}).`);
   }
+}
+
+/**
+ * Safely masks a stream key for logs or sanitized display (e.g. live_****1234)
+ */
+export function maskStreamKey(key: string): string {
+  if (!key) return '****';
+  const clean = key.trim();
+  if (clean.length <= 8) return '****';
+  return `${clean.substring(0, 4)}****${clean.substring(clean.length - 4)}`;
 }

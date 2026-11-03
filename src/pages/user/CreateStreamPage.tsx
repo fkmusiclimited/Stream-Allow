@@ -27,6 +27,7 @@ export const CreateStreamPage: React.FC = () => {
     currentPath,
     channels,
     playlists,
+    addPlaylist,
     addStream,
     addVideoToPlaylist,
     navigate,
@@ -67,13 +68,25 @@ export const CreateStreamPage: React.FC = () => {
   const [secondaryStreamUrl, setSecondaryStreamUrl] = useState('');
   const [backupRtmpServer, setBackupRtmpServer] = useState('rtmp://b.rtmp.youtube.com/live2?backup=1');
 
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState(playlists[0]?.id || 'pl-1');
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState(playlists[0]?.id || '');
+  const [autoCreatedPlaylistId, setAutoCreatedPlaylistId] = useState<string | null>(null);
+  const [uploadedVideoData, setUploadedVideoData] = useState<{
+    title: string;
+    duration: string;
+    durationSeconds?: number;
+    resolution?: string;
+    format?: string;
+    filePath?: string;
+    fileSizeBytes?: number;
+    url: string;
+    thumbnail: string;
+  } | null>(null);
   const [resolution, setResolution] = useState('1080p60');
   const [loop247, setLoop247] = useState(true);
   const [isScheduled, setIsScheduled] = useState(false);
   const [scheduleTime, setScheduleTime] = useState('Tomorrow, 8:00 PM');
 
-  const selectedPlaylist = playlists.find(p => p.id === selectedPlaylistId) || playlists[0];
+  const selectedPlaylist = playlists.find(p => p.id === (autoCreatedPlaylistId || selectedPlaylistId)) || playlists[0];
 
   // MP4 Video Upload Handler with Real Server Storage & FFprobe
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -150,8 +163,7 @@ export const CreateStreamPage: React.FC = () => {
               setVideoResolution(uploaded.resolution);
             }
 
-            // Immediately attach to selected playlist in database/state for real FFmpeg playback
-            addVideoToPlaylist(selectedPlaylistId, {
+            const videoMeta = {
               title: title.trim() || file.name.replace(/\.[^/.]+$/, ''),
               duration: uploaded.formattedDuration || '05:00',
               durationSeconds: uploaded.durationSeconds,
@@ -161,9 +173,14 @@ export const CreateStreamPage: React.FC = () => {
               fileSizeBytes: uploaded.fileSizeBytes,
               url: uploaded.url,
               thumbnail: uploaded.thumbnailUrl || thumbnail
-            });
+            };
+            setUploadedVideoData(videoMeta);
 
-            showToast(`Video "${file.name}" uploaded & analyzed with FFprobe successfully!`, 'success');
+            if (autoCreatedPlaylistId) {
+              addVideoToPlaylist(autoCreatedPlaylistId, videoMeta);
+            }
+
+            showToast(`Video "${file.name}" uploaded successfully!`, 'success');
           } catch {
             showToast(`"${file.name}" uploaded to server storage.`, 'success');
           }
@@ -189,6 +206,7 @@ export const CreateStreamPage: React.FC = () => {
     setUploadedVideoDuration('15:20');
     setVideoResolution('1080p FHD');
     setThumbnail('https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80');
+    setUploadedVideoData(null);
     showToast('Reset to default MP4 video preset.', 'info');
   };
 
@@ -208,6 +226,19 @@ export const CreateStreamPage: React.FC = () => {
     setThumbnail(thumb);
     if (!title.trim()) {
       setTitle(name.replace('.mp4', ''));
+    }
+    const presetMeta = {
+      title: name.replace('.mp4', ''),
+      duration: duration,
+      durationSeconds: 900,
+      resolution: res,
+      format: 'MP4',
+      url: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600',
+      thumbnail: thumb
+    };
+    setUploadedVideoData(presetMeta);
+    if (autoCreatedPlaylistId) {
+      addVideoToPlaylist(autoCreatedPlaylistId, presetMeta);
     }
     showToast(`Selected preset video: ${name}`, 'success');
   };
@@ -269,11 +300,64 @@ export const CreateStreamPage: React.FC = () => {
     }
   };
 
-  const handleNext = () => {
-    if (currentStep === 1 && !title.trim()) {
-      showToast('Please provide a title for your live stream.', 'error');
+  const handleNext = async () => {
+    if (currentStep === 1) {
+      const streamTitle = title.trim();
+      if (!streamTitle) {
+        showToast('Please provide a Stream Title.', 'error');
+        return;
+      }
+
+      let activePlId = autoCreatedPlaylistId;
+
+      // Auto-create playlist with Stream Title if not already created
+      if (!activePlId) {
+        try {
+          const newPl = await addPlaylist({
+            name: streamTitle,
+            description: description.trim() || `Playlist for stream: ${streamTitle}`,
+            thumbnail: thumbnail,
+            status: 'Active',
+            isLiveLoop: true,
+            duration: uploadedVideoDuration || '15:20',
+            videosCount: 0,
+            videos: []
+          });
+
+          if (newPl && newPl.id) {
+            activePlId = newPl.id;
+            setAutoCreatedPlaylistId(newPl.id);
+            setSelectedPlaylistId(newPl.id);
+          }
+        } catch (err: any) {
+          console.warn('Auto create playlist error:', err);
+        }
+      }
+
+      // Attach video to this newly created playlist
+      if (activePlId) {
+        try {
+          const videoPayload = uploadedVideoData || {
+            title: streamTitle || uploadedVideoName.replace(/\.[^/.]+$/, ''),
+            duration: uploadedVideoDuration || '15:20',
+            durationSeconds: 920,
+            resolution: videoResolution || '1080p FHD',
+            format: 'MP4',
+            filePath: uploadedFilePath || undefined,
+            fileSizeBytes: 50000000,
+            url: videoPreviewUrl || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600',
+            thumbnail: thumbnail
+          };
+          await addVideoToPlaylist(activePlId, videoPayload);
+        } catch (vErr) {
+          console.warn('Attach video error:', vErr);
+        }
+      }
+
+      setCurrentStep(2);
       return;
     }
+
     if (currentStep === 2) {
       if (!rtmpServerUrl.trim()) {
         showToast('Please provide an RTMP Server URL.', 'error');
@@ -284,6 +368,7 @@ export const CreateStreamPage: React.FC = () => {
         return;
       }
     }
+
     if (currentStep < 4) {
       setCurrentStep((prev) => (prev + 1) as any);
     }
@@ -321,6 +406,8 @@ export const CreateStreamPage: React.FC = () => {
       return;
     }
 
+    const targetPlaylistId = autoCreatedPlaylistId || selectedPlaylistId;
+
     const newStream = {
       title: title.trim() || uploadedVideoName.replace(/\.[^/.]+$/, ''),
       description: description || `24/7 Live broadcast of ${uploadedVideoName}`,
@@ -331,7 +418,7 @@ export const CreateStreamPage: React.FC = () => {
       date: 'Today',
       time: 'Just now',
       scheduledTime: isScheduled ? scheduleTime : undefined,
-      playlistId: selectedPlaylistId,
+      playlistId: targetPlaylistId,
       streamKey: cleanKey,
       rtmpUrl: cleanServerUrl,
       resolution,

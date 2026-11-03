@@ -2,25 +2,17 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   ListVideo,
-  PlusCircle,
   Search,
   Film,
   Trash2,
-  MoreVertical,
-  X,
+  ExternalLink,
   Play
 } from 'lucide-react';
 
 export const AdminPlaylistPage: React.FC = () => {
-  const { playlists, addPlaylist, deletePlaylist, showToast } = useApp();
+  const { playlists, deletePlaylist, openPlaylistDetails, showToast } = useApp();
   const [filter, setFilter] = useState<'all' | 'active' | 'scheduled' | 'ended'>('all');
   const [search, setSearch] = useState('');
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-
-  // New playlist form
-  const [name, setName] = useState('');
-  const [videosCount, setVideosCount] = useState('30');
-  const [duration, setDuration] = useState('5h 20m');
 
   const filteredPlaylists = playlists.filter(p => {
     const matchesTab = filter === 'all' || p.status.toLowerCase() === filter;
@@ -28,38 +20,14 @@ export const AdminPlaylistPage: React.FC = () => {
     return matchesTab && matchesSearch;
   });
 
-  const handleCreate = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) return;
-
-    addPlaylist({
-      name,
-      videosCount: parseInt(videosCount) || 20,
-      duration: duration || '4h 00m',
-      status: 'Active',
-      thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&auto=format&fit=crop&q=80',
-      videos: []
-    });
-
-    setCreateModalOpen(false);
-    setName('');
-  };
-
   return (
     <div className="space-y-6">
       {/* Header matching reference 5 */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-extrabold text-white">All Playlists</h1>
-          <p className="text-xs text-slate-400">Create and manage video playlists across all creators.</p>
+          <p className="text-xs text-slate-400">Stream playlists generated automatically from your live broadcasts.</p>
         </div>
-        <button
-          onClick={() => setCreateModalOpen(true)}
-          className="px-5 py-2.5 rounded-xl font-bold text-xs text-white gradient-brand hover:opacity-95 shadow-lg shadow-rose-600/25 flex items-center gap-2 transition-all"
-        >
-          <PlusCircle className="w-4 h-4" />
-          <span>Create Playlist</span>
-        </button>
       </div>
 
       {/* Tabs matching reference 5 */}
@@ -69,25 +37,25 @@ export const AdminPlaylistPage: React.FC = () => {
             onClick={() => setFilter('all')}
             className={`px-3 py-1.5 rounded-lg transition-all ${filter === 'all' ? 'bg-[#FF1B6B] text-white shadow' : 'text-slate-400 hover:text-white'}`}
           >
-            All (320)
+            All ({playlists.length})
           </button>
           <button
             onClick={() => setFilter('active')}
             className={`px-3 py-1.5 rounded-lg transition-all ${filter === 'active' ? 'bg-[#FF1B6B] text-white shadow' : 'text-slate-400 hover:text-white'}`}
           >
-            Active (280)
+            Active ({playlists.filter(p => (p.status || '').toLowerCase() === 'active').length})
           </button>
           <button
             onClick={() => setFilter('scheduled')}
             className={`px-3 py-1.5 rounded-lg transition-all ${filter === 'scheduled' ? 'bg-[#FF1B6B] text-white shadow' : 'text-slate-400 hover:text-white'}`}
           >
-            Scheduled (25)
+            Scheduled ({playlists.filter(p => (p.status || '').toLowerCase() === 'scheduled').length})
           </button>
           <button
             onClick={() => setFilter('ended')}
             className={`px-3 py-1.5 rounded-lg transition-all ${filter === 'ended' ? 'bg-[#FF1B6B] text-white shadow' : 'text-slate-400 hover:text-white'}`}
           >
-            Ended (15)
+            Ended ({playlists.filter(p => (p.status || '').toLowerCase() === 'ended').length})
           </button>
         </div>
 
@@ -119,80 +87,75 @@ export const AdminPlaylistPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {filteredPlaylists.map((pl, idx) => (
-                <tr key={pl.id} className="hover:bg-slate-900/40 transition-colors">
-                  <td className="py-3 px-4 font-mono text-slate-500">{idx + 1}</td>
-
-                  <td className="py-3 px-4">
-                    <img src={pl.thumbnail} alt={pl.name} className="w-14 h-10 rounded-lg object-cover" />
-                  </td>
-
-                  <td className="py-3 px-4 font-bold text-white">
-                    {pl.name}
-                  </td>
-
-                  <td className="py-3 px-4 text-slate-300 font-medium">
-                    {pl.videosCount}
-                  </td>
-
-                  <td className="py-3 px-4">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      {pl.status}
-                    </span>
-                  </td>
-
-                  <td className="py-3 px-4 text-slate-400">
-                    {pl.createdAt}
-                  </td>
-
-                  <td className="py-3 px-4 text-right">
-                    <button
-                      onClick={() => deletePlaylist(pl.id)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors"
-                      title="Delete playlist"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+              {filteredPlaylists.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-slate-500">
+                    No stream playlists found. Start a new live stream to generate a playlist.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredPlaylists.map((pl, idx) => (
+                  <tr key={pl.id} className="hover:bg-slate-900/40 transition-colors">
+                    <td className="py-3 px-4 font-mono text-slate-500">{idx + 1}</td>
+
+                    <td className="py-3 px-4">
+                      <img
+                        src={pl.thumbnail}
+                        alt={pl.name}
+                        onClick={() => openPlaylistDetails(pl.id)}
+                        className="w-14 h-10 rounded-lg object-cover cursor-pointer hover:opacity-80 transition-opacity"
+                      />
+                    </td>
+
+                    <td className="py-3 px-4 font-bold text-white">
+                      <span
+                        onClick={() => openPlaylistDetails(pl.id)}
+                        className="cursor-pointer hover:text-[#FF1B6B] transition-colors"
+                      >
+                        {pl.name}
+                      </span>
+                    </td>
+
+                    <td className="py-3 px-4 text-slate-300 font-medium">
+                      {pl.videos?.length || pl.videosCount || 0}
+                    </td>
+
+                    <td className="py-3 px-4">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        {pl.status}
+                      </span>
+                    </td>
+
+                    <td className="py-3 px-4 text-slate-400">
+                      {pl.createdAt}
+                    </td>
+
+                    <td className="py-3 px-4 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => openPlaylistDetails(pl.id)}
+                          className="px-2.5 py-1 rounded-lg text-emerald-400 bg-emerald-950/60 hover:bg-emerald-900 border border-emerald-500/30 text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                          title="View playlist and add/delete videos"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>View</span>
+                        </button>
+                        <button
+                          onClick={() => deletePlaylist(pl.id)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
+                          title="Delete playlist"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </div>
-
-      {/* Modal */}
-      {createModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
-          <div className="relative w-full max-w-md bg-[#0F1626] border border-slate-800 rounded-2xl p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-bold text-white text-base">Create Admin Playlist</h3>
-              <button onClick={() => setCreateModalOpen(false)} className="text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Playlist Title</label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  placeholder="e.g. Master LoFi 24/7 Pool"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
-                />
-              </div>
-              <button
-                type="submit"
-                className="w-full py-2.5 rounded-xl bg-[#FF1B6B] text-white font-bold text-xs"
-              >
-                Create Playlist
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

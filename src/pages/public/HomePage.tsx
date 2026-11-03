@@ -23,7 +23,19 @@ export const HomePage: React.FC = () => {
 
   const handleSeeDemo = () => {
     // Open the first live stream in full broadcast modal
-    const liveStream = streams.find(s => s.status === 'live') || streams[0];
+    const liveStream = streams.find(s => s.status === 'live') || streams[0] || {
+      id: 'demo-showcase',
+      title: 'Relaxing Lo-Fi Ambient Beats 24/7',
+      thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80',
+      channelName: 'Stream Join Official',
+      status: 'live' as const,
+      viewers: 1250,
+      views: '45.2K',
+      date: 'Today',
+      resolution: '1080p60',
+      bitrate: '4500 kbps',
+      rtmpUrl: 'rtmp://a.rtmp.youtube.com/live2'
+    };
     setActiveViewingStream(liveStream);
   };
 

@@ -108,6 +108,30 @@ export async function extractVideoMetadata(filePath: string, originalName: strin
     if (!isNaN(durationRaw) && durationRaw > 0) {
       durationSeconds = Math.round(durationRaw);
     }
+
+    // Audio stream validation: Ensure video has an audio stream. If silent, add AAC track.
+    try {
+      const audioProbe = execSync(
+        `ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of json "${filePath}"`,
+        { timeout: 8000 }
+      ).toString();
+      const parsedAudio = JSON.parse(audioProbe);
+      const hasAudio = parsedAudio.streams && parsedAudio.streams.length > 0;
+
+      if (!hasAudio) {
+        console.log(`[Media Storage] Uploaded video "${path.basename(filePath)}" has no audio track. Normalizing with silent 44.1kHz AAC audio...`);
+        const tempNorm = `${filePath}.norm.mp4`;
+        execSync(
+          `ffmpeg -y -i "${filePath}" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -c:v copy -c:a aac -b:a 128k -ar 44100 -shortest "${tempNorm}"`,
+          { stdio: 'ignore', timeout: 30000 }
+        );
+        if (fs.existsSync(tempNorm) && fs.statSync(tempNorm).size > 1000) {
+          fs.renameSync(tempNorm, filePath);
+        }
+      }
+    } catch (audioErr: any) {
+      console.warn('[Media Storage] Audio check notice:', audioErr.message);
+    }
   } catch (err: any) {
     console.warn('[FFprobe] Warning running ffprobe analysis:', err.message);
     if (fileSizeBytes < 1000) {

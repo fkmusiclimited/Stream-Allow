@@ -53,8 +53,8 @@ interface AppContextType {
   impersonateUser: (user: User) => void;
   exitImpersonation: () => void;
   switchRole: (role: UserRole | 'guest') => void;
-  login: (email: string, pass: string) => boolean;
-  register: (name: string, email: string, pass: string) => boolean;
+  login: (email: string, pass: string) => Promise<boolean>;
+  register: (name: string, email: string, pass: string) => Promise<boolean>;
   logout: () => void;
 
   // Data collections & mutations
@@ -67,17 +67,24 @@ interface AppContextType {
 
   streams: StreamItem[];
   userStreams: StreamItem[];
-  addStream: (stream: Omit<StreamItem, 'id' | 'viewers' | 'views'>) => void;
-  updateStreamStatus: (id: string, status: StreamItem['status']) => void;
-  deleteStream: (id: string) => void;
+  fetchStreams: () => Promise<StreamItem[] | undefined>;
+  addStream: (stream: Omit<StreamItem, 'id' | 'viewers' | 'views'>) => Promise<void>;
+  updateStreamStatus: (id: string, status: StreamItem['status']) => Promise<void>;
+  deleteStream: (id: string) => Promise<void>;
 
   playlists: PlaylistItem[];
   userPlaylists: PlaylistItem[];
+  fetchPlaylists: () => Promise<PlaylistItem[] | undefined>;
   selectedPlaylistId: string;
   setSelectedPlaylistId: (id: string) => void;
   openPlaylistDetails: (id: string) => void;
-  addPlaylist: (playlist: Omit<PlaylistItem, 'id' | 'createdAt'>) => void;
-  deletePlaylist: (id: string) => void;
+  addPlaylist: (playlist: Omit<PlaylistItem, 'id' | 'createdAt'>) => Promise<PlaylistItem | null>;
+  deletePlaylist: (id: string) => Promise<void>;
+
+  // Uploaded media files
+  userMedia: any[];
+  fetchMedia: () => Promise<any[] | undefined>;
+  deleteMedia: (id: string) => Promise<boolean>;
   addVideoToPlaylist: (playlistId: string, video: {
     title: string;
     duration: string;
@@ -280,8 +287,176 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       fetchUsers();
     }
   }, [currentPath]);
-  const [streams, setStreams] = useState<StreamItem[]>(INITIAL_STREAMS);
-  const [playlists, setPlaylists] = useState<PlaylistItem[]>(INITIAL_PLAYLISTS);
+  const [streams, setStreams] = useState<StreamItem[]>([]);
+  const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
+  const [userMedia, setUserMedia] = useState<any[]>([]);
+
+  const fetchPlaylists = async (tokenOverride?: string): Promise<PlaylistItem[] | undefined> => {
+    try {
+      const token = tokenOverride || localStorage.getItem('streamjoin_token');
+      if (!token) {
+        setPlaylists([]);
+        return [];
+      }
+      const res = await fetch('/api/playlists', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.playlists)) {
+          const loaded: PlaylistItem[] = data.playlists.map((p: any) => ({
+            id: p.id,
+            userId: p.userId,
+            name: p.name,
+            description: p.description,
+            status: p.status,
+            isLiveLoop: p.isLiveLoop,
+            totalVideos: p.totalVideos || (p.videos?.length || 0),
+            totalRuntime: p.totalRuntime || '00:00',
+            thumbnail: p.thumbnail,
+            createdAt: 'Today',
+            videos: (p.videos || []).map((v: any) => ({
+              id: v.id,
+              title: v.title,
+              duration: v.duration,
+              durationSeconds: v.durationSeconds,
+              resolution: v.resolution,
+              format: v.format,
+              url: v.url,
+              filePath: v.filePath,
+              fileSizeBytes: v.fileSizeBytes,
+              thumbnail: v.thumbnail,
+              positionOrder: v.positionOrder
+            }))
+          }));
+          setPlaylists(loaded);
+          if (loaded.length > 0) {
+            setSelectedPlaylistId(prev => (prev && loaded.some(pl => pl.id === prev)) ? prev : loaded[0].id);
+          }
+          return loaded;
+        }
+      }
+    } catch (err) {
+      console.warn('fetchPlaylists error:', err);
+    }
+  };
+
+  const fetchStreams = async (tokenOverride?: string): Promise<StreamItem[] | undefined> => {
+    try {
+      const token = tokenOverride || localStorage.getItem('streamjoin_token');
+      if (!token) {
+        setStreams([]);
+        return [];
+      }
+      const res = await fetch('/api/streams', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.streams)) {
+          const loaded: StreamItem[] = data.streams.map((s: any) => ({
+            id: s.id,
+            userId: s.userId,
+            title: s.title,
+            thumbnail: s.thumbnail,
+            channelName: 'YouTube Live',
+            playlistId: s.playlistId,
+            status: s.status,
+            viewers: s.viewers || 0,
+            views: '0',
+            date: 'Today',
+            resolution: s.resolution || '1080p60',
+            bitrate: s.bitrate || '4500 kbps',
+            rtmpUrl: s.streamUrl,
+            streamKey: '••••••••••••'
+          }));
+          setStreams(loaded);
+          return loaded;
+        }
+      }
+    } catch (err) {
+      console.warn('fetchStreams error:', err);
+    }
+  };
+
+  const fetchMedia = async (tokenOverride?: string): Promise<any[] | undefined> => {
+    try {
+      const token = tokenOverride || localStorage.getItem('streamjoin_token');
+      if (!token) {
+        setUserMedia([]);
+        return [];
+      }
+      const res = await fetch('/api/media', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.media)) {
+          setUserMedia(data.media);
+          return data.media;
+        }
+      }
+    } catch (err) {
+      console.warn('fetchMedia error:', err);
+    }
+  };
+
+  const deleteMedia = async (id: string): Promise<boolean> => {
+    const token = localStorage.getItem('streamjoin_token');
+    try {
+      const res = await fetch(`/api/media/${id}`, {
+        method: 'DELETE',
+        headers: {
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setUserMedia(prev => prev.filter(m => m.id !== id));
+        showToast('Video deleted from server storage.', 'info');
+        return true;
+      }
+      showToast(data.message || 'Failed to delete video.', 'error');
+      return false;
+    } catch (err: any) {
+      showToast(`Error deleting video: ${err.message}`, 'error');
+      return false;
+    }
+  };
+
+  // Restore authenticated session from backend on mount
+  useEffect(() => {
+    const restoreSession = async () => {
+      const token = localStorage.getItem('streamjoin_token');
+      if (!token) return;
+
+      try {
+        const res = await fetch('/api/auth/me', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.user) {
+            setCurrentUser(data.user);
+            await Promise.all([
+              fetchPlaylists(token),
+              fetchStreams(token),
+              fetchMedia(token)
+            ]);
+            return;
+          }
+        }
+        localStorage.removeItem('streamjoin_token');
+        localStorage.removeItem('streamjoin_current_user');
+        setCurrentUser(null);
+      } catch (err) {
+        console.warn('Session restore notice:', err);
+      }
+    };
+
+    restoreSession();
+  }, []);
+
   const [channels, setChannels] = useState<YouTubeChannel[]>(INITIAL_CHANNELS);
   const [plans, setPlans] = useState<SubscriptionPlan[]>(SUBSCRIPTION_PLANS);
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
@@ -293,7 +468,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [systemSettings, setSystemSettings] = useState<SystemSettingsData>(INITIAL_SYSTEM_SETTINGS);
 
   // Playlists & Live Stream Restart State
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>('pl-1');
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>('');
   const [streamRestartState, setStreamRestartState] = useState<{
     isRestarting: boolean;
     streamTitle: string;
@@ -449,7 +624,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     logActivity('Exited user visit and returned to Admin Dashboard', 'admin');
   };
 
-  const login = (email: string, pass: string): boolean => {
+  const login = async (email: string, pass: string): Promise<boolean> => {
     const normalizedEmail = (email || '').trim().toLowerCase();
     const trimmedPass = (pass || '').trim();
 
@@ -458,58 +633,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
 
-    // 1. Super Admin Login Check
-    if (normalizedEmail === 'admin@streamjoin.com' || normalizedEmail === 'admin@gmail.com' || normalizedEmail === 'admin') {
-      if (trimmedPass === 'admin123' || trimmedPass === 'admin1234') {
-        const adminUser: User = {
-          id: 'u-admin',
-          name: 'Super Admin',
-          email: 'admin@streamjoin.com',
-          role: 'super_admin',
-          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-          plan: 'Business',
-          status: 'Active',
-          joinedDate: 'Oct 01, 2026',
-          channelsCount: 15,
-          totalViews: '2.5M',
-          renewalDate: 'Nov 01, 2027',
-          renewalDaysLeft: 365,
-          usedStorageGB: 12.5,
-          maxStorageGB: 100
-        };
-        setCurrentUser(adminUser);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: normalizedEmail, password: trimmedPass })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.message || 'Invalid email or password.', 'error');
+        return false;
+      }
+
+      const { user, token } = data;
+      localStorage.setItem('streamjoin_token', token);
+      localStorage.setItem('streamjoin_current_user', JSON.stringify(user));
+      setCurrentUser(user);
+
+      // Load user-isolated data from PostgreSQL
+      await Promise.all([
+        fetchPlaylists(token),
+        fetchStreams(token),
+        fetchMedia(token)
+      ]);
+
+      if (user.role === 'super_admin' || user.role === 'admin') {
         navigate('admin/dashboard');
-        showToast('Welcome back, Super Admin!', 'success');
-        logActivity('Super Admin Login', 'admin');
-        return true;
       } else {
-        showToast('Invalid password for Super Admin. (Password: admin123)', 'error');
-        return false;
+        navigate('user/dashboard');
       }
-    }
 
-    // 2. Existing Users Login Check (e.g. Fahim Ahmed or newly registered accounts)
-    const found = users.find(u => u.email.toLowerCase() === normalizedEmail);
-    if (found) {
-      const validPass = found.password || (found.email === 'fahim@gmail.com' ? 'user123' : 'user123');
-      if (trimmedPass === validPass || trimmedPass === 'user123' || trimmedPass === 'password123') {
-        setCurrentUser(found);
-        navigate(found.role === 'super_admin' ? 'admin/dashboard' : 'user/dashboard');
-        showToast(`Welcome back, ${found.name}!`, 'success');
-        logActivity('User Login', 'login');
-        return true;
-      } else {
-        showToast('Incorrect password. Please try again. (Default password: user123)', 'error');
-        return false;
-      }
+      showToast(`Welcome back, ${user.name}!`, 'success');
+      logActivity(`${user.name} logged in`, 'login');
+      return true;
+    } catch (err: any) {
+      showToast(`Login failed: ${err.message}`, 'error');
+      return false;
     }
-
-    // 3. User Not Found
-    showToast('No registered user found with this email. Please register first.', 'error');
-    return false;
   };
 
-  const register = (name: string, email: string, pass: string): boolean => {
+  const register = async (name: string, email: string, pass: string): Promise<boolean> => {
     const normalizedEmail = (email || '').trim().toLowerCase();
     const trimmedPass = (pass || '').trim();
 
@@ -518,66 +682,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
 
-    const existing = users.find(u => u.email.toLowerCase() === normalizedEmail);
-    if (existing) {
-      showToast('An account with this email already exists. Please login.', 'error');
-      return false;
-    }
-
-    const todayFormatted = new Intl.DateTimeFormat('en-US', { month: 'short', day: '2-digit', year: 'numeric' }).format(new Date());
-
-    const newUser: User = {
-      id: `u-${Date.now()}`,
-      name: name.trim() || normalizedEmail.split('@')[0],
-      email: normalizedEmail,
-      password: trimmedPass,
-      role: 'user',
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-      plan: 'Basic',
-      status: 'Pending', // Inactive until subscription plan is paid
-      renewalDaysLeft: 0,
-      renewalDate: 'Not Activated',
-      usedStorageGB: 0.0,
-      maxStorageGB: 5,
-      joinedDate: todayFormatted,
-      channelsCount: 0,
-      totalViews: '0'
-    };
-
-    setUsers(prev => [newUser, ...prev]);
-    setCurrentUser(newUser);
-    navigate('user/dashboard');
-    showToast('Registration successful! Please activate a plan to start live broadcasting.', 'info');
-    logActivity('New User Registration (Plan Inactive)', 'user');
-
-    // Also register on backend API asynchronously so user is persisted in PostgreSQL
     try {
-      fetch('/api/auth/register', {
+      const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newUser.name, email: newUser.email, password: trimmedPass })
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data.token) {
-          localStorage.setItem('streamjoin_token', data.token);
-        }
-        fetchUsers();
-      })
-      .catch((err) => {
-        console.warn('Backend registration notice:', err);
+        body: JSON.stringify({
+          name: name.trim() || normalizedEmail.split('@')[0],
+          email: normalizedEmail,
+          password: trimmedPass
+        })
       });
-    } catch (e) {
-      // ignore
-    }
 
-    return true;
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.message || 'Registration failed.', 'error');
+        return false;
+      }
+
+      const { user, token } = data;
+      localStorage.setItem('streamjoin_token', token);
+      localStorage.setItem('streamjoin_current_user', JSON.stringify(user));
+      setCurrentUser(user);
+
+      // Fresh user starts with clean empty playlists, streams, and media
+      setPlaylists([]);
+      setStreams([]);
+      setUserMedia([]);
+
+      navigate('user/dashboard');
+      showToast('Registration successful! Welcome to Stream Join.', 'success');
+      logActivity(`New User Registered: ${user.name}`, 'user');
+      fetchUsers();
+      return true;
+    } catch (err: any) {
+      showToast(`Registration failed: ${err.message}`, 'error');
+      return false;
+    }
   };
 
   const logout = () => {
     logActivity('User Logout', 'login');
+    localStorage.removeItem('streamjoin_token');
+    localStorage.removeItem('streamjoin_current_user');
+    localStorage.removeItem('streamjoin_impersonator');
     setCurrentUser(null);
     setAdminImpersonatorUser(null);
+    setPlaylists([]);
+    setStreams([]);
+    setUserMedia([]);
     navigate('public/login');
     showToast('Logged out successfully.', 'info');
   };
@@ -688,97 +840,166 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const addStream = (streamData: Omit<StreamItem, 'id' | 'viewers' | 'views'>) => {
-    const newStream: StreamItem = {
-      ...streamData,
-      id: `str-${Date.now()}`,
-      userId: currentUser?.id || 'u1',
-      viewers: streamData.status === 'live' ? 1 : 0,
-      views: '0'
-    };
-    setStreams(prev => [newStream, ...prev]);
-    showToast(`Stream "${newStream.title}" created successfully!`, 'success');
-    logActivity(`Created stream: ${newStream.title}`, 'user');
-
-    // Sync with backend API with JWT Authorization header
+  const addStream = async (streamData: Omit<StreamItem, 'id' | 'viewers' | 'views'>) => {
     const token = localStorage.getItem('streamjoin_token');
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    fetch('/api/streams', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        title: newStream.title,
-        playlistId: newStream.playlistId,
-        streamUrl: newStream.rtmpUrl,
-        streamKey: newStream.streamKey,
-        thumbnail: newStream.thumbnail,
-        resolution: newStream.resolution,
-        bitrate: newStream.bitrate
-      })
-    })
-    .then(res => res.json())
-    .then(data => {
-      if (data.success && data.stream?.id) {
-        if (newStream.status === 'live') {
-          fetch(`/api/streams/${data.stream.id}/start`, { method: 'POST', headers }).catch(() => {});
+    try {
+      const res = await fetch('/api/streams', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          title: streamData.title,
+          playlistId: streamData.playlistId,
+          streamUrl: streamData.rtmpUrl,
+          streamKey: streamData.streamKey,
+          thumbnail: streamData.thumbnail,
+          resolution: streamData.resolution,
+          bitrate: streamData.bitrate
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.stream) {
+        const s = data.stream;
+        const newStream: StreamItem = {
+          ...streamData,
+          id: s.id,
+          userId: s.userId,
+          viewers: 0,
+          views: '0'
+        };
+        setStreams(prev => [newStream, ...prev]);
+        showToast(`Stream "${newStream.title}" created successfully!`, 'success');
+        logActivity(`Created stream: ${newStream.title}`, 'user');
+
+        if (streamData.status === 'live') {
+          await updateStreamStatus(s.id, 'live');
         }
+        return;
       }
-    })
-    .catch(() => {});
+      showToast(data.message || data.error || 'Failed to create stream.', 'error');
+    } catch (err: any) {
+      showToast(`Error creating stream: ${err.message}`, 'error');
+    }
   };
 
-  const updateStreamStatus = (id: string, status: StreamItem['status']) => {
-    setStreams(prev => prev.map(s => {
-      if (s.id === id) {
-        const viewers = status === 'live' ? (s.viewers || 120) : 0;
-        return { ...s, status, viewers };
-      }
-      return s;
-    }));
-    showToast(`Stream status set to ${status.toUpperCase()}`, 'info');
-    logActivity(`Updated stream status to ${status}`, 'user');
-
+  const updateStreamStatus = async (id: string, status: StreamItem['status']) => {
     const token = localStorage.getItem('streamjoin_token');
     const authHeaders: Record<string, string> = {};
     if (token) {
       authHeaders['Authorization'] = `Bearer ${token}`;
     }
 
-    if (status === 'live') {
-      fetch(`/api/streams/${id}/start`, { method: 'POST', headers: authHeaders }).catch(() => {});
-    } else if (status === 'ended' || status === 'failed') {
-      fetch(`/api/streams/${id}/stop`, { method: 'POST', headers: authHeaders }).catch(() => {});
+    try {
+      if (status === 'live') {
+        const res = await fetch(`/api/streams/${id}/start`, { method: 'POST', headers: authHeaders });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          setStreams(prev => prev.map(s => {
+            if (s.id === id) {
+              return { ...s, status: 'live', viewers: data.stats?.fps ? Math.round(data.stats.fps * 4) : 1 };
+            }
+            return s;
+          }));
+          showToast(`⚡ Stream is now LIVE with real FFmpeg worker (PID: ${data.stats?.pid})!`, 'success');
+          logActivity(`Started live stream ${id} (PID: ${data.stats?.pid})`, 'user');
+        } else {
+          setStreams(prev => prev.map(s => s.id === id ? { ...s, status: 'failed' } : s));
+          showToast(data.error || 'FFmpeg failed to start stream.', 'error');
+        }
+      } else if (status === 'ended' || (status as string) === 'stopped' || status === 'failed') {
+        const res = await fetch(`/api/streams/${id}/stop`, { method: 'POST', headers: authHeaders });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          setStreams(prev => prev.map(s => s.id === id ? { ...s, status: 'ended', viewers: 0 } : s));
+          showToast('Stream stopped successfully.', 'info');
+          logActivity(`Stopped live stream ${id}`, 'user');
+        } else {
+          showToast(data.error || 'Failed to stop stream.', 'error');
+        }
+      }
+    } catch (err: any) {
+      showToast(`Stream update error: ${err.message}`, 'error');
     }
   };
 
-  const deleteStream = (id: string) => {
-    setStreams(prev => prev.filter(s => s.id !== id));
-    showToast('Stream removed.', 'info');
-    logActivity(`Deleted stream ${id}`, 'user');
+  const deleteStream = async (id: string) => {
+    const token = localStorage.getItem('streamjoin_token');
+    try {
+      const res = await fetch(`/api/streams/${id}`, {
+        method: 'DELETE',
+        headers: {
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setStreams(prev => prev.filter(s => s.id !== id));
+        showToast('Stream removed.', 'info');
+        logActivity(`Deleted stream ${id}`, 'user');
+        return;
+      }
+      showToast(data.message || 'Failed to delete stream.', 'error');
+    } catch (err: any) {
+      showToast(`Error deleting stream: ${err.message}`, 'error');
+    }
   };
 
-  const addPlaylist = (playlistData: Omit<PlaylistItem, 'id' | 'createdAt'>) => {
-    const newPl: PlaylistItem = {
-      ...playlistData,
-      id: `pl-${Date.now()}`,
-      userId: currentUser?.id || 'u1',
-      createdAt: 'Today'
-    };
-    setPlaylists(prev => [newPl, ...prev]);
-    showToast(`Playlist "${newPl.name}" created!`, 'success');
-    logActivity(`Created playlist ${newPl.name}`, 'user');
+  const addPlaylist = async (playlistData: Omit<PlaylistItem, 'id' | 'createdAt'>): Promise<PlaylistItem | null> => {
+    const token = localStorage.getItem('streamjoin_token');
+    try {
+      const res = await fetch('/api/playlists', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          name: playlistData.name,
+          description: playlistData.description || '',
+          thumbnail: playlistData.thumbnail,
+          isLiveLoop: playlistData.isLiveLoop !== undefined ? playlistData.isLiveLoop : true
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.playlist) {
+        const p = data.playlist;
+        const newPl: PlaylistItem = {
+          ...playlistData,
+          id: p.id,
+          userId: p.userId,
+          createdAt: 'Today',
+          videos: []
+        };
+        setPlaylists(prev => [newPl, ...prev]);
+        setSelectedPlaylistId(p.id);
+        showToast(`Playlist "${newPl.name}" created!`, 'success');
+        logActivity(`Created playlist ${newPl.name}`, 'user');
+        return newPl;
+      }
+      showToast(data.message || 'Failed to create playlist.', 'error');
+      return null;
+    } catch (err: any) {
+      showToast(`Error creating playlist: ${err.message}`, 'error');
+      return null;
+    }
   };
 
   const openPlaylistDetails = (playlistId: string) => {
     setSelectedPlaylistId(playlistId);
-    navigate('user/playlist-details');
+    if (currentPath.startsWith('admin/')) {
+      navigate('admin/playlist-details');
+    } else {
+      navigate('user/playlist-details');
+    }
   };
 
-  const addVideoToPlaylist = (
+  const addVideoToPlaylist = async (
     playlistId: string,
     newVideo: {
       title: string;
@@ -792,37 +1013,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       fileSizeBytes?: number;
     }
   ) => {
-    const videoItem = {
-      ...newVideo,
-      id: `v-${Date.now()}`
-    };
-
-    setPlaylists(prev => prev.map(p => {
-      if (p.id === playlistId) {
-        return {
-          ...p,
-          videosCount: (p.videos?.length || 0) + 1,
-          videos: [...(p.videos || []), videoItem]
-        };
-      }
-      return p;
-    }));
-
-    // Persist to backend server API
     const token = localStorage.getItem('streamjoin_token');
-    if (token) {
-      fetch(`/api/playlists/${playlistId}/videos`, {
+    try {
+      const res = await fetch(`/api/playlists/${playlistId}/videos`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
-        body: JSON.stringify(videoItem)
-      }).catch(err => console.warn('Failed to sync video to backend playlist:', err));
-    }
+        body: JSON.stringify(newVideo)
+      });
 
-    showToast(`Video "${newVideo.title}" added to playlist queue!`, 'success');
-    logActivity(`Added video "${newVideo.title}" to playlist`, 'user');
+      const data = await res.json();
+      if (res.ok && data.success && data.video) {
+        const serverVideo = data.video;
+        setPlaylists(prev => prev.map(p => {
+          if (p.id === playlistId) {
+            const updatedVideos = [...(p.videos || []), serverVideo];
+            return {
+              ...p,
+              videosCount: updatedVideos.length,
+              videos: updatedVideos
+            };
+          }
+          return p;
+        }));
+        showToast(`Video "${newVideo.title}" added to playlist queue!`, 'success');
+        logActivity(`Added video "${newVideo.title}" to playlist`, 'user');
+        return;
+      }
+      showToast(data.message || 'Failed to add video to playlist.', 'error');
+    } catch (err: any) {
+      showToast(`Error adding video: ${err.message}`, 'error');
+    }
   };
 
   const addVideoToPlaylistAndRestartLive = (
@@ -956,7 +1179,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, 1200);
   };
 
-  const removeVideoFromPlaylist = (playlistId: string, videoId: string) => {
+  const removeVideoFromPlaylist = async (playlistId: string, videoId: string) => {
+    try {
+      const token = localStorage.getItem('streamjoin_token');
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      await fetch(`/api/playlists/${playlistId}/videos/${videoId}`, {
+        method: 'DELETE',
+        headers
+      });
+    } catch (e) {
+      console.warn('Failed to delete video from playlist on server:', e);
+    }
+
     setPlaylists(prev => prev.map(p => {
       if (p.id === playlistId) {
         return {
@@ -970,7 +1205,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Video removed from playlist', 'info');
   };
 
-  const deletePlaylist = (id: string) => {
+  const deletePlaylist = async (id: string) => {
+    try {
+      const token = localStorage.getItem('streamjoin_token');
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      await fetch(`/api/playlists/${id}`, {
+        method: 'DELETE',
+        headers
+      });
+    } catch (e) {
+      console.warn('Failed to delete playlist on server:', e);
+    }
+
     setPlaylists(prev => prev.filter(p => p.id !== id));
     showToast('Playlist deleted', 'info');
   };
@@ -1028,9 +1275,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const newTx: Transaction = {
       id: `tx-${Date.now()}`,
-      userId: currentUser?.id || 'u1',
-      userName: currentUser?.name || 'Fahim Ahmed',
-      userEmail: currentUser?.email || 'fahim@gmail.com',
+      userId: currentUser?.id || '',
+      userName: currentUser?.name || 'User',
+      userEmail: currentUser?.email || '',
       plan: `${selected.name} Plan`,
       amountUSD: selected.priceUSD,
       amountBDT: selected.priceBDT,
@@ -1096,21 +1343,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addTicket = (subject: string, category: string, priority: SupportTicket['priority'], message: string) => {
     const newTicket: SupportTicket = {
       id: `t-${Date.now()}`,
-      userId: currentUser?.id || 'u1',
-      userName: currentUser?.name || 'Fahim Ahmed',
-      userEmail: currentUser?.email || 'fahim@gmail.com',
+      userId: currentUser?.id || '',
+      userName: currentUser?.name || 'User',
+      userEmail: currentUser?.email || '',
       subject,
       category,
       priority,
       status: 'Open',
       createdAt: 'Today',
       updatedAt: 'Just now',
-      assignedTo: 'Jannat',
+      assignedTo: 'Support Team',
       messages: [
         {
           id: `m-${Date.now()}`,
           sender: 'user',
-          senderName: currentUser?.name || 'Fahim Ahmed',
+          senderName: currentUser?.name || 'User',
           text: message,
           timestamp: 'Just now'
         }
@@ -1196,19 +1443,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const userStreams = streams.filter(s => {
     if (currentUser?.role && currentUser.role !== 'user') return true;
     if (s.userId) return s.userId === currentUser?.id;
-    return currentUser?.id === 'u1';
+    return false;
   });
 
   const userPlaylists = playlists.filter(p => {
     if (currentUser?.role && currentUser.role !== 'user') return true;
     if (p.userId) return p.userId === currentUser?.id;
-    return currentUser?.id === 'u1';
+    return false;
   });
 
   const userTransactions = transactions.filter(t => {
     if (currentUser?.role && currentUser.role !== 'user') return true;
     if (t.userId) return t.userId === currentUser?.id;
-    return currentUser?.id === 'u1';
+    return false;
   });
 
   return (
@@ -1236,11 +1483,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         expireUserPlan,
         streams,
         userStreams,
+        fetchStreams,
         addStream,
         updateStreamStatus,
         deleteStream,
         playlists,
         userPlaylists,
+        fetchPlaylists,
+        userMedia,
+        fetchMedia,
+        deleteMedia,
         selectedPlaylistId,
         setSelectedPlaylistId,
         openPlaylistDetails,

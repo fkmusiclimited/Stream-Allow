@@ -78,6 +78,52 @@ export class StreamManager {
   }
 
   /**
+   * Probes video and ensures it has an audio track.
+   * If video is silent, muxes a silent AAC audio track so concat demuxer never crashes.
+   */
+  public ensureVideoAudioTrack(videoPath: string): string {
+    if (!fs.existsSync(videoPath)) return videoPath;
+
+    try {
+      const probeOut = execSync(
+        `ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`,
+        { timeout: 4000 }
+      ).toString().trim();
+
+      if (probeOut.includes('audio')) {
+        return videoPath; // Audio track exists
+      }
+    } catch {
+      // ignore probe error
+    }
+
+    // Video has no audio track. Check if normalized companion file already exists
+    const dir = path.dirname(videoPath);
+    const ext = path.extname(videoPath);
+    const base = path.basename(videoPath, ext);
+    const normalizedPath = path.join(dir, `${base}_audio_norm${ext}`);
+
+    if (fs.existsSync(normalizedPath) && fs.statSync(normalizedPath).size > 1000) {
+      return normalizedPath;
+    }
+
+    try {
+      console.log(`[FFmpeg Engine] Silent video detected ("${base}"). Ingesting standardized silent AAC audio track...`);
+      execSync(
+        `ffmpeg -y -i "${videoPath}" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -c:v copy -c:a aac -b:a 128k -ar 44100 -shortest "${normalizedPath}"`,
+        { stdio: 'ignore', timeout: 20000 }
+      );
+      if (fs.existsSync(normalizedPath) && fs.statSync(normalizedPath).size > 1000) {
+        return normalizedPath;
+      }
+    } catch (normErr: any) {
+      console.warn('[FFmpeg Engine] Notice during audio track injection:', normErr.message);
+    }
+
+    return videoPath;
+  }
+
+  /**
    * Starts an isolated real FFmpeg live stream process for a user.
    */
   public async startStream(config: StreamConfig): Promise<StreamProcessStats> {
@@ -195,14 +241,17 @@ export class StreamManager {
     const primaryTarget = `${baseRtmpUrl}/${cleanStreamKey}`;
 
     // 4. Validate local video files on disk
-    const validVideoPaths = (config.videoPaths || []).filter(v => typeof v === 'string' && fs.existsSync(v));
-    if (validVideoPaths.length === 0) {
+    const rawVideoPaths = (config.videoPaths || []).filter(v => typeof v === 'string' && fs.existsSync(v));
+    if (rawVideoPaths.length === 0) {
       const errorMsg = 'No valid video files found on disk for this stream playlist. Please upload MP4 video files.';
       item.stats.state = 'crashed';
       item.stats.pid = null;
       item.stats.lastError = errorMsg;
       throw new Error(errorMsg);
     }
+
+    // Ensure all videos have valid, standardized audio tracks so concat demuxer never drops audio or crashes
+    const validVideoPaths = rawVideoPaths.map(v => this.ensureVideoAudioTrack(v));
 
     // Prepare media sources concat file
     const tempDir = path.join(os.tmpdir(), 'streamjoin_concat');
@@ -218,49 +267,45 @@ export class StreamManager {
     let ffmpegArgs: string[];
     const videoBitrate = config.videoBitrateKbps || 4500;
 
+    const commonEncodingArgs = [
+      '-re',
+      '-stream_loop', '-1',
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', concatPath,
+      '-fflags', '+genpts+discardcorrupt',
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-b:v', `${videoBitrate}k`,
+      '-maxrate', `${videoBitrate}k`,
+      '-bufsize', `${videoBitrate * 2}k`,
+      '-pix_fmt', 'yuv420p',
+      '-g', '60',
+      '-keyint_min', '60',
+      '-sc_threshold', '0',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-ar', '44100',
+      '-ac', '2',
+      '-af', 'aresample=async=1:first_pts=0',
+      '-map', '0:v:0',
+      '-map', '0:a:0?'
+    ];
+
     if (config.isDualStream && config.backupRtmpUrl) {
-      // Dual RTMP Streaming via tee muxer
-      const teeOutput = `[f=flv:onfail=ignore]${primaryTarget}|[f=flv:onfail=ignore]${config.backupRtmpUrl}`;
+      // Dual RTMP Streaming via tee muxer with standard FLV headers
+      const teeOutput = `[f=flv:flvflags=no_duration_filesize:onfail=ignore]${primaryTarget}|[f=flv:flvflags=no_duration_filesize:onfail=ignore]${config.backupRtmpUrl}`;
       ffmpegArgs = [
-        '-re',
-        '-stream_loop', '-1',
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', concatPath,
-        '-c:v', 'libx264',
-        '-preset', 'veryfast',
-        '-b:v', `${videoBitrate}k`,
-        '-maxrate', `${videoBitrate}k`,
-        '-bufsize', `${videoBitrate * 2}k`,
-        '-pix_fmt', 'yuv420p',
-        '-g', '60',
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-ar', '44100',
+        ...commonEncodingArgs,
         '-f', 'tee',
-        '-map', '0:v',
-        '-map', '0:a',
         teeOutput
       ];
     } else {
       // Standard Single RTMP Target to YouTube
       ffmpegArgs = [
-        '-re',
-        '-stream_loop', '-1',
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', concatPath,
-        '-c:v', 'libx264',
-        '-preset', 'veryfast',
-        '-b:v', `${videoBitrate}k`,
-        '-maxrate', `${videoBitrate}k`,
-        '-bufsize', `${videoBitrate * 2}k`,
-        '-pix_fmt', 'yuv420p',
-        '-g', '60',
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-ar', '44100',
+        ...commonEncodingArgs,
         '-f', 'flv',
+        '-flvflags', 'no_duration_filesize',
         primaryTarget
       ];
     }
@@ -484,7 +529,7 @@ export class StreamManager {
     }, 5000);
   }
 
-  public async recoverActiveStreams(streamsToRecover: StreamConfig[]) {
+  public async recoverActiveStreams(streamsToRecover: StreamConfig[], onFail?: (streamId: string, error: string) => Promise<void>) {
     if (!this.checkFfmpeg()) {
       console.log('[FFmpeg Supervisor] Host system has no FFmpeg binary installed. No background streams recovered.');
       return;
@@ -496,6 +541,9 @@ export class StreamManager {
         console.log(`[FFmpeg Supervisor] Successfully recovered live stream: ${config.title} (${config.streamId})`);
       } catch (err: any) {
         console.warn(`[FFmpeg Supervisor] Stream recovery skipped for ${config.streamId}: ${err.message}`);
+        if (onFail) {
+          await onFail(config.streamId, err.message).catch(() => {});
+        }
       }
     }
   }

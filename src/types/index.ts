@@ -56,6 +56,8 @@ export interface PlaylistItem {
   id: string;
   userId?: string;
   name: string;
+  description?: string;
+  isLiveLoop?: boolean;
   videosCount: number;
   status: 'Active' | 'Scheduled' | 'Ended';
   createdAt: string;

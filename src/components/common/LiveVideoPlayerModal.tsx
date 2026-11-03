@@ -14,8 +14,7 @@ import {
   ShieldCheck,
   SkipForward,
   SkipBack,
-  Repeat,
-  Layers
+  Repeat
 } from 'lucide-react';
 
 export const LiveVideoPlayerModal: React.FC = () => {
@@ -23,9 +22,7 @@ export const LiveVideoPlayerModal: React.FC = () => {
     activeViewingStream,
     setActiveViewingStream,
     playlists,
-    showToast,
-    setSelectedPlaylistId,
-    navigate
+    showToast
   } = useApp();
   const [isPlaying, setIsPlaying] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
@@ -75,23 +72,6 @@ export const LiveVideoPlayerModal: React.FC = () => {
 
   if (!activeViewingStream) return null;
 
-  const handleGoToPlaylist = () => {
-    // Find target playlist from linkedPlaylist, or matching playlistId, or matching title, or default to first
-    const target = linkedPlaylist ||
-      playlists.find(p => p.id === activeViewingStream.playlistId) ||
-      playlists.find(p => p.name.toLowerCase().includes(activeViewingStream.title.toLowerCase()) || activeViewingStream.title.toLowerCase().includes(p.name.toLowerCase())) ||
-      playlists[0];
-
-    if (target) {
-      setSelectedPlaylistId(target.id);
-      setActiveViewingStream(null);
-      navigate('user/playlist-details');
-      showToast(`Opened playlist: "${target.name}"`, 'success');
-    } else {
-      setActiveViewingStream(null);
-      navigate('user/playlist');
-    }
-  };
 
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
@@ -138,16 +118,6 @@ export const LiveVideoPlayerModal: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2.5">
-            {/* Playlist Button before X mark as requested */}
-            <button
-              onClick={handleGoToPlaylist}
-              className="px-3.5 py-1.5 rounded-lg text-xs font-bold text-emerald-400 bg-emerald-950/70 hover:bg-emerald-900/80 border border-emerald-500/60 hover:border-emerald-400 flex items-center gap-1.5 transition-all shadow-md shadow-emerald-950/60 active:scale-95 cursor-pointer group"
-              title="Open this stream's playlist and all added files"
-            >
-              <Layers className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
-              <span>Playlist</span>
-            </button>
-
             <button
               onClick={() => setActiveViewingStream(null)}
               className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"

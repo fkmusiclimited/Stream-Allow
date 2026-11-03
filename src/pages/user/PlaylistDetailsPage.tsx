@@ -29,6 +29,7 @@ import { StreamItem } from '../../types';
 
 export const PlaylistDetailsPage: React.FC = () => {
   const {
+    currentPath,
     playlists,
     selectedPlaylistId,
     navigate,
@@ -473,7 +474,7 @@ export const PlaylistDetailsPage: React.FC = () => {
       {/* Top Breadcrumb & Actions */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <button
-          onClick={() => navigate('user/playlist')}
+          onClick={() => navigate(currentPath.startsWith('admin/') ? 'admin/playlists' : 'user/playlist')}
           className="inline-flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors group cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />

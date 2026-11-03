@@ -1,50 +1,15 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useApp } from '../../context/AppContext';
 import {
-  PlusCircle,
   ListVideo,
   Play,
   Trash2,
-  Clock,
   Film,
-  MoreVertical,
-  X,
-  CheckCircle2,
   ExternalLink
 } from 'lucide-react';
-import { PlaylistItem } from '../../types';
 
 export const UserPlaylistPage: React.FC = () => {
-  const { userPlaylists, userStreams, addPlaylist, deletePlaylist, openPlaylistDetails, showToast } = useApp();
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-
-  // New playlist form
-  const [newTitle, setNewTitle] = useState('');
-  const [videoCount, setVideoCount] = useState('20');
-  const [duration, setDuration] = useState('3h 30m');
-  const [thumbnailUrl, setThumbnailUrl] = useState('https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&auto=format&fit=crop&q=80');
-
-  const handleCreate = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTitle.trim()) {
-      showToast('Please enter a playlist name.', 'error');
-      return;
-    }
-
-    addPlaylist({
-      name: newTitle,
-      videosCount: parseInt(videoCount) || 12,
-      duration: duration || '2h 15m',
-      status: 'Active',
-      thumbnail: thumbnailUrl,
-      videos: [
-        { id: `v-${Date.now()}`, title: 'Opening Track / Intro Loop', duration: '12:30', url: 'https://youtube.com/watch?v=demo', thumbnail: thumbnailUrl }
-      ]
-    });
-
-    setCreateModalOpen(false);
-    setNewTitle('');
-  };
+  const { userPlaylists, userStreams, deletePlaylist, openPlaylistDetails, navigate } = useApp();
 
   return (
     <div className="space-y-6">
@@ -53,16 +18,9 @@ export const UserPlaylistPage: React.FC = () => {
         <div>
           <h1 className="text-2xl font-extrabold text-white">My Playlists</h1>
           <p className="text-xs text-slate-400">
-            Create, manage video files, and broadcast continuous loops to YouTube Live.
+            Playlists created automatically from your live broadcasts. Add and manage video files for continuous 24/7 loops.
           </p>
         </div>
-        <button
-          onClick={() => setCreateModalOpen(true)}
-          className="px-5 py-2.5 rounded-xl font-bold text-xs text-white gradient-brand hover:opacity-95 shadow-lg shadow-rose-600/25 flex items-center gap-2 transition-all transform active:scale-95"
-        >
-          <PlusCircle className="w-4 h-4" />
-          <span>Create Playlist</span>
-        </button>
       </div>
 
       {/* Playlist Grid or Empty State */}
@@ -79,11 +37,11 @@ export const UserPlaylistPage: React.FC = () => {
               </p>
             </div>
             <button
-              onClick={() => setCreateModalOpen(true)}
+              onClick={() => navigate('user/create-stream')}
               className="px-5 py-2.5 rounded-xl font-bold text-xs text-white gradient-brand hover:opacity-95 shadow-lg shadow-rose-600/25 flex items-center gap-2 transition-all transform active:scale-95 cursor-pointer"
             >
-              <PlusCircle className="w-4 h-4" />
-              <span>Create Your First Playlist</span>
+              <Play className="w-4 h-4" />
+              <span>Start a Live Stream</span>
             </button>
           </div>
         </div>
@@ -193,76 +151,6 @@ export const UserPlaylistPage: React.FC = () => {
               </div>
             );
           })}
-        </div>
-      )}
-
-      {/* Create Playlist Modal */}
-      {createModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
-          <div className="relative w-full max-w-md bg-[#0F1626] border border-slate-800 rounded-2xl shadow-2xl p-6 space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-bold text-white text-base">Create Video Playlist</h3>
-              <button
-                onClick={() => setCreateModalOpen(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Playlist Name</label>
-                <input
-                  type="text"
-                  required
-                  value={newTitle}
-                  onChange={e => setNewTitle(e.target.value)}
-                  placeholder="e.g. 24/7 Deep LoFi Midnight"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">Total Videos</label>
-                  <input
-                    type="number"
-                    value={videoCount}
-                    onChange={e => setVideoCount(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">Duration</label>
-                  <input
-                    type="text"
-                    value={duration}
-                    onChange={e => setDuration(e.target.value)}
-                    placeholder="e.g. 4h 30m"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Cover Art URL</label>
-                <input
-                  type="text"
-                  value={thumbnailUrl}
-                  onChange={e => setThumbnailUrl(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-2.5 rounded-xl font-bold text-xs text-white gradient-brand hover:opacity-95 shadow-md shadow-rose-600/20"
-              >
-                Save & Initialize Playlist
-              </button>
-            </form>
-          </div>
         </div>
       )}
     </div>

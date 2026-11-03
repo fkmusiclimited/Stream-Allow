@@ -3,9 +3,10 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { initDatabaseConnection, isDbConnected, query } from './src/server/db/db';
-import { encryptStreamKey } from './src/server/utils/crypto';
+import { encryptStreamKey, validateEncryptionConfig, maskStreamKey } from './src/server/utils/crypto';
 import { StreamManager, StreamConfig } from './src/server/ffmpeg/StreamManager';
 import { getVpsMetrics } from './src/server/monitoring/ResourceMonitor';
 import {
@@ -28,9 +29,15 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function getPlanLimits(planName?: string) {
+  const key = (planName || 'Basic').toLowerCase() as keyof typeof SUBSCRIPTION_TIERS;
+  return SUBSCRIPTION_TIERS[key] || SUBSCRIPTION_TIERS.basic;
+}
+
 async function startServer() {
   // Validate critical security environment variables (halts if missing)
   validateJwtConfig();
+  validateEncryptionConfig();
 
   const app = express();
   const PORT = 3000;
@@ -82,16 +89,11 @@ async function startServer() {
           }
         }
 
+        // If playlist is empty or videos are missing on disk, do not start stream. Mark as failed.
         if (videoPaths.length === 0) {
-          const mediaUploadDir = process.env.MEDIA_UPLOAD_DIR || path.resolve(process.cwd(), 'uploads/media');
-          if (fs.existsSync(mediaUploadDir)) {
-            const files = fs.readdirSync(mediaUploadDir)
-              .filter(f => /\.(mp4|mkv|mov|flv|ts|avi)$/i.test(f))
-              .map(f => path.join(mediaUploadDir, f));
-            if (files.length > 0) {
-              videoPaths = files;
-            }
-          }
+          await query("UPDATE live_streams SET status = 'failed' WHERE id = $1", [s.id]).catch(() => {});
+          console.warn(`[PostgreSQL Recovery] Stream ${s.id} ("${s.title}") has no valid video files on disk. Marked as failed.`);
+          continue;
         }
 
         liveConfigs.push({
@@ -109,7 +111,10 @@ async function startServer() {
       }
 
       if (liveConfigs.length > 0) {
-        await streamManager.recoverActiveStreams(liveConfigs);
+        await streamManager.recoverActiveStreams(liveConfigs, async (failedStreamId, reason) => {
+          await query("UPDATE live_streams SET status = 'failed' WHERE id = $1", [failedStreamId]).catch(() => {});
+          console.warn(`[PostgreSQL Recovery] Stream ${failedStreamId} marked as failed: ${reason}`);
+        });
       }
     } catch (err: any) {
       console.warn('[PostgreSQL Recovery] Startup recovery note:', err.message);
@@ -165,13 +170,13 @@ async function startServer() {
     }
 
     try {
-      const existing = await query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+      const existing = await query('SELECT id FROM users WHERE email = $1', [email.trim().toLowerCase()]);
       if (existing.rows.length > 0) {
         return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
       }
 
       const passwordHash = await hashPassword(password);
-      const newId = `u-${Date.now()}`;
+      const newId = 'usr_' + crypto.randomUUID().replace(/-/g, '').substring(0, 16);
       const userName = name || email.split('@')[0];
       const role = 'user';
       const plan = 'Basic';
@@ -179,8 +184,8 @@ async function startServer() {
       const joinedDate = 'Today';
 
       const insertRes = await query(
-        `INSERT INTO users (id, name, email, password_hash, role, plan, status, joined_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO users (id, name, email, password_hash, role, plan, status, joined_date, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          RETURNING id, name, email, role, plan, status`,
         [newId, userName, email.toLowerCase(), passwordHash, role, plan, status, joinedDate]
       );
@@ -211,7 +216,7 @@ async function startServer() {
     }
 
     try {
-      const userRes = await query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+      const userRes = await query('SELECT * FROM users WHERE email = $1', [email.trim().toLowerCase()]);
       if (userRes.rows.length === 0) {
         return res.status(401).json({ success: false, message: 'Invalid email or password.' });
       }
@@ -261,7 +266,7 @@ async function startServer() {
     const expiresAt = Date.now() + 3600000; // 1 hour
     try {
       await query(
-        'INSERT INTO password_resets (email, token, expires_at) VALUES ($1, $2, $3)',
+        'INSERT INTO password_resets (email, token, expires_at, created_at) VALUES ($1, $2, $3, CURRENT_TIMESTAMP)',
         [email.toLowerCase(), token, expiresAt]
       );
       res.json({
@@ -287,7 +292,7 @@ async function startServer() {
 
       const resetRecord = resetRes.rows[0];
       const newHash = await hashPassword(newPassword);
-      await query('UPDATE users SET password_hash = $1 WHERE LOWER(email) = LOWER($2)', [newHash, resetRecord.email]);
+      await query('UPDATE users SET password_hash = $1 WHERE email = $2', [newHash, resetRecord.email.toLowerCase()]);
       await query('DELETE FROM password_resets WHERE token = $1', [token]);
 
       res.json({ success: true, message: 'Password reset successfully. You can now login.' });
@@ -300,13 +305,16 @@ async function startServer() {
   // 3. PLAYLISTS & VIDEO MANAGEMENT (PostgreSQL)
   // ----------------------------------------------------
   app.get('/api/playlists', authenticateToken, async (req: AuthenticatedRequest, res) => {
-    const userId = req.user?.id || 'u-1';
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
     const isSuperAdmin = req.user?.role === 'super_admin';
 
     try {
       const playlistsQuery = isSuperAdmin
         ? 'SELECT * FROM playlists ORDER BY created_at DESC'
-        : 'SELECT * FROM playlists WHERE user_id = $1 OR user_id = \'u-1\' ORDER BY created_at DESC';
+        : 'SELECT * FROM playlists WHERE user_id = $1 ORDER BY created_at DESC';
       const plRes = await query(playlistsQuery, isSuperAdmin ? [] : [userId]);
 
       const playlists = plRes.rows.map(p => ({
@@ -352,8 +360,11 @@ async function startServer() {
 
   app.post('/api/playlists', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const { name, description, isLiveLoop, thumbnail } = req.body;
-    const newId = `pl-${Date.now()}`;
-    const userId = req.user?.id || 'u-1';
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+    const newId = 'pl_' + crypto.randomUUID().replace(/-/g, '').substring(0, 16);
     const plName = name || 'New Live Playlist';
     const plDesc = description || '';
     const plThumb = thumbnail || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
@@ -361,8 +372,8 @@ async function startServer() {
 
     try {
       const insertRes = await query(
-        `INSERT INTO playlists (id, user_id, name, description, status, is_live_loop, total_videos, total_runtime, thumbnail)
-         VALUES ($1, $2, $3, $4, 'Scheduled', $5, 0, '00:00', $6)
+        `INSERT INTO playlists (id, user_id, name, description, status, is_live_loop, total_videos, total_runtime, thumbnail, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'Scheduled', $5, 0, '00:00', $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          RETURNING *`,
         [newId, userId, plName, plDesc, loopVal, plThumb]
       );
@@ -387,7 +398,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/playlists/:id', authenticateToken, async (req, res) => {
+  app.get('/api/playlists/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
       const plRes = await query('SELECT * FROM playlists WHERE id = $1', [req.params.id]);
       if (plRes.rows.length === 0) {
@@ -395,6 +406,10 @@ async function startServer() {
       }
 
       const p = plRes.rows[0];
+      if (p.user_id !== req.user?.id && req.user?.role !== 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Access denied: You do not own this playlist.' });
+      }
+
       const videosRes = await query(
         'SELECT * FROM playlist_videos WHERE playlist_id = $1 ORDER BY position_order ASC',
         [p.id]
@@ -431,9 +446,17 @@ async function startServer() {
     }
   });
 
-  app.put('/api/playlists/:id', authenticateToken, async (req, res) => {
+  app.put('/api/playlists/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const { name, description, status, isLiveLoop, thumbnail } = req.body;
     try {
+      const existingRes = await query('SELECT user_id FROM playlists WHERE id = $1', [req.params.id]);
+      if (existingRes.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Playlist not found.' });
+      }
+      if (existingRes.rows[0].user_id !== req.user?.id && req.user?.role !== 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Access denied: You do not own this playlist.' });
+      }
+
       const plRes = await query(
         `UPDATE playlists
          SET name = COALESCE($2, name),
@@ -447,18 +470,22 @@ async function startServer() {
         [req.params.id, name, description, status, isLiveLoop, thumbnail]
       );
 
-      if (plRes.rows.length === 0) {
-        return res.status(404).json({ success: false, message: 'Playlist not found.' });
-      }
-
       res.json({ success: true, playlist: plRes.rows[0] });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
   });
 
-  app.delete('/api/playlists/:id', authenticateToken, async (req, res) => {
+  app.delete('/api/playlists/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
+      const existingRes = await query('SELECT user_id FROM playlists WHERE id = $1', [req.params.id]);
+      if (existingRes.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Playlist not found.' });
+      }
+      if (existingRes.rows[0].user_id !== req.user?.id && req.user?.role !== 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Access denied: You do not own this playlist.' });
+      }
+
       await query('DELETE FROM playlists WHERE id = $1', [req.params.id]);
       res.json({ success: true, message: 'Playlist deleted successfully.' });
     } catch (err: any) {
@@ -466,31 +493,95 @@ async function startServer() {
     }
   });
 
-  app.post('/api/playlists/:id/videos', authenticateToken, async (req, res) => {
+  app.post('/api/playlists/:id/videos', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const playlistId = req.params.id;
+    const userId = req.user?.id;
+    const isSuperAdmin = req.user?.role === 'super_admin';
+
     try {
-      const plRes = await query('SELECT * FROM playlists WHERE id = $1', [playlistId]);
+      let plRes = await query('SELECT * FROM playlists WHERE id = $1', [playlistId]);
       if (plRes.rows.length === 0) {
-        return res.status(404).json({ success: false, message: 'Playlist not found.' });
+        const autoPlName = req.body.playlistName || req.body.title || 'Stream Playlist';
+        await query(
+          `INSERT INTO playlists (id, user_id, name, description, status, is_live_loop, total_videos, total_runtime, thumbnail, created_at, updated_at)
+           VALUES ($1, $2, $3, '', 'Active', true, 0, '00:00', $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [playlistId, userId, autoPlName, req.body.thumbnail || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600']
+        );
+        plRes = await query('SELECT * FROM playlists WHERE id = $1', [playlistId]);
+      } else if (plRes.rows[0].user_id !== userId && !isSuperAdmin) {
+        return res.status(403).json({ success: false, message: 'Access denied: You do not own this playlist.' });
       }
 
-      const videoId = req.body.id || `v-${Date.now()}`;
-      const title = req.body.title || 'Untitled Video';
-      const duration = req.body.duration || '00:00';
-      const durationSeconds = parseInt(req.body.durationSeconds, 10) || 0;
-      const resolution = req.body.resolution || '1080p FHD';
-      const format = req.body.format || 'MP4';
-      const url = req.body.url || `/media/${req.body.fileName || ''}`;
-      const filePath = req.body.filePath || null;
-      const fileSizeBytes = parseInt(req.body.fileSizeBytes, 10) || 0;
-      const thumbnail = req.body.thumbnail || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80';
+      // Video Validation & Auto-registration fallback
+      const targetMediaId = req.body.mediaId || req.body.id;
+      let mediaRecord: any = null;
+
+      if (targetMediaId) {
+        const mRes = await query('SELECT * FROM uploaded_media WHERE id = $1', [targetMediaId]);
+        if (mRes.rows.length > 0) {
+          mediaRecord = mRes.rows[0];
+        }
+      }
+
+      if (!mediaRecord && (req.body.filePath || req.body.url)) {
+        const cleanPath = req.body.filePath || '';
+        const cleanUrl = req.body.url || '';
+        const mRes = await query(
+          'SELECT * FROM uploaded_media WHERE file_path = $1 OR url = $2',
+          [cleanPath, cleanUrl]
+        );
+        if (mRes.rows.length > 0) {
+          mediaRecord = mRes.rows[0];
+        }
+      }
+
+      if (!mediaRecord) {
+        const newMediaId = 'med_' + crypto.randomUUID().replace(/-/g, '').substring(0, 16);
+        const autoName = req.body.title || 'Broadcast Video.mp4';
+        const autoPath = req.body.filePath || `/app/applet/uploads/${newMediaId}.mp4`;
+        const autoUrl = req.body.url || `/uploads/${newMediaId}.mp4`;
+        const autoDuration = req.body.duration || '15:20';
+        const autoDurSecs = req.body.durationSeconds || 920;
+        const autoRes = req.body.resolution || '1080p FHD';
+        const autoFormat = req.body.format || 'MP4';
+        const autoThumb = req.body.thumbnail || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600';
+        const autoSize = req.body.fileSizeBytes || 50000000;
+
+        const insRes = await query(
+          `INSERT INTO uploaded_media (id, user_id, file_name, original_name, file_path, url, duration_seconds, formatted_duration, resolution, format, file_size_bytes, thumbnail_url, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
+           RETURNING *`,
+          [newMediaId, userId, autoName, autoName, autoPath, autoUrl, autoDurSecs, autoDuration, autoRes, autoFormat, autoSize, autoThumb]
+        );
+        mediaRecord = insRes.rows[0];
+      }
+
+      // Ownership enforcement: Video must be owned by the playlist owner (or super admin)
+      if (mediaRecord.user_id !== userId && !isSuperAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied: You do not own this uploaded video.'
+        });
+      }
+
+      // Determine genuine server video properties strictly from database record
+      const videoId = 'vid_' + crypto.randomUUID().replace(/-/g, '').substring(0, 16);
+      const title = req.body.title || mediaRecord.original_name || 'Untitled Video';
+      const duration = mediaRecord.formatted_duration || req.body.duration || '00:00';
+      const durationSeconds = mediaRecord.duration_seconds || 0;
+      const resolution = mediaRecord.resolution || '1080p FHD';
+      const format = mediaRecord.format || 'MP4';
+      const url = mediaRecord.url;
+      const filePath = mediaRecord.file_path;
+      const fileSizeBytes = mediaRecord.file_size_bytes || 0;
+      const thumbnail = mediaRecord.thumbnail_url || req.body.thumbnail || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600';
 
       const countRes = await query('SELECT COUNT(*)::int as count FROM playlist_videos WHERE playlist_id = $1', [playlistId]);
       const nextOrder = (countRes.rows[0]?.count || 0) + 1;
 
       const videoInsert = await query(
-        `INSERT INTO playlist_videos (id, playlist_id, title, duration, duration_seconds, resolution, format, url, file_path, file_size_bytes, thumbnail, position_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `INSERT INTO playlist_videos (id, playlist_id, title, duration, duration_seconds, resolution, format, url, file_path, file_size_bytes, thumbnail, position_order, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
          RETURNING *`,
         [videoId, playlistId, title, duration, durationSeconds, resolution, format, url, filePath, fileSizeBytes, thumbnail, nextOrder]
       );
@@ -531,11 +622,19 @@ async function startServer() {
     }
   });
 
-  app.put('/api/playlists/:id/videos/reorder', authenticateToken, async (req, res) => {
+  app.put('/api/playlists/:id/videos/reorder', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const playlistId = req.params.id;
-    const { orderedVideoIds } = req.body;
-    if (Array.isArray(orderedVideoIds)) {
-      try {
+    try {
+      const plRes = await query('SELECT user_id FROM playlists WHERE id = $1', [playlistId]);
+      if (plRes.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Playlist not found.' });
+      }
+      if (plRes.rows[0].user_id !== req.user?.id && req.user?.role !== 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Access denied: You do not own this playlist.' });
+      }
+
+      const { orderedVideoIds } = req.body;
+      if (Array.isArray(orderedVideoIds)) {
         for (let i = 0; i < orderedVideoIds.length; i++) {
           await query(
             'UPDATE playlist_videos SET position_order = $1 WHERE playlist_id = $2 AND id = $3',
@@ -543,17 +642,25 @@ async function startServer() {
           );
         }
         res.json({ success: true, message: 'Videos reordered successfully.' });
-      } catch (err: any) {
-        res.status(500).json({ success: false, error: err.message });
+      } else {
+        res.status(400).json({ success: false, message: 'orderedVideoIds must be an array.' });
       }
-    } else {
-      res.status(400).json({ success: false, message: 'orderedVideoIds must be an array.' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
     }
   });
 
-  app.delete('/api/playlists/:id/videos/:videoId', authenticateToken, async (req, res) => {
+  app.delete('/api/playlists/:id/videos/:videoId', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const { id, videoId } = req.params;
     try {
+      const plRes = await query('SELECT user_id FROM playlists WHERE id = $1', [id]);
+      if (plRes.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Playlist not found.' });
+      }
+      if (plRes.rows[0].user_id !== req.user?.id && req.user?.role !== 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Access denied: You do not own this playlist.' });
+      }
+
       await query('DELETE FROM playlist_videos WHERE playlist_id = $1 AND id = $2', [id, videoId]);
 
       // Recalculate runtime
@@ -580,7 +687,84 @@ async function startServer() {
   // ----------------------------------------------------
   // 4. VIDEO UPLOAD & MEDIA STORAGE (Multer + FFprobe + PostgreSQL)
   // ----------------------------------------------------
-  app.post('/api/media/upload', authenticateToken, (req: AuthenticatedRequest, res) => {
+  app.get('/api/media', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+    const isSuperAdmin = req.user?.role === 'super_admin';
+
+    try {
+      const q = isSuperAdmin
+        ? 'SELECT * FROM uploaded_media ORDER BY created_at DESC'
+        : 'SELECT * FROM uploaded_media WHERE user_id = $1 ORDER BY created_at DESC';
+      const mRes = await query(q, isSuperAdmin ? [] : [userId]);
+
+      const media = mRes.rows.map(m => ({
+        id: m.id,
+        userId: m.user_id,
+        fileName: m.file_name,
+        originalName: m.original_name,
+        filePath: m.file_path,
+        url: m.url,
+        durationSeconds: m.duration_seconds,
+        formattedDuration: m.formatted_duration,
+        resolution: m.resolution,
+        format: m.format,
+        fileSizeBytes: m.file_size_bytes,
+        thumbnailUrl: m.thumbnail_url,
+        createdAt: m.created_at
+      }));
+
+      res.json({ success: true, media });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.delete('/api/media/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      const mRes = await query('SELECT * FROM uploaded_media WHERE id = $1', [req.params.id]);
+      if (mRes.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Media file not found.' });
+      }
+
+      const m = mRes.rows[0];
+      if (m.user_id !== req.user?.id && req.user?.role !== 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Access denied: You do not own this media.' });
+      }
+
+      if (m.file_path && fs.existsSync(m.file_path)) {
+        try { fs.unlinkSync(m.file_path); } catch {}
+      }
+
+      await query('DELETE FROM uploaded_media WHERE id = $1', [req.params.id]);
+      res.json({ success: true, message: 'Media deleted successfully.' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/media/upload', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required to upload media.' });
+    }
+
+    // Pre-check: Determine user's subscription storage quota
+    let userPlan = 'Basic';
+    let isSuperAdmin = req.user?.role === 'super_admin';
+    try {
+      const uRes = await query('SELECT plan, role FROM users WHERE id = $1', [userId]);
+      if (uRes.rows.length > 0) {
+        userPlan = uRes.rows[0].plan || 'Basic';
+        if (uRes.rows[0].role === 'super_admin') isSuperAdmin = true;
+      }
+    } catch {}
+
+    const limits = getPlanLimits(userPlan);
+    const maxStorageBytes = limits.maxStorageGB * 1024 * 1024 * 1024;
+
     videoUpload.single('video')(req, res, async (err: any) => {
       if (err) {
         if (err.code === 'LIMIT_FILE_SIZE') {
@@ -593,31 +777,55 @@ async function startServer() {
         return res.status(400).json({ success: false, message: 'No video file provided. Please choose a video file.' });
       }
 
+      // Storage quota verification: Verify user has not exceeded package storage limit
+      if (!isSuperAdmin) {
+        try {
+          const storageRes = await query(
+            'SELECT COALESCE(SUM(file_size_bytes), 0)::bigint as used FROM uploaded_media WHERE user_id = $1',
+            [userId]
+          );
+          const currentUsedBytes = parseInt(storageRes.rows[0]?.used || '0', 10);
+          if (currentUsedBytes + req.file.size > maxStorageBytes) {
+            try { fs.unlinkSync(req.file.path); } catch {}
+            const usedGb = (currentUsedBytes / (1024 * 1024 * 1024)).toFixed(2);
+            return res.status(400).json({
+              success: false,
+              message: `Storage limit exceeded for your ${limits.name} plan (${limits.maxStorageGB} GB max). You have currently used ${usedGb} GB. Please upgrade your subscription or delete existing videos.`
+            });
+          }
+        } catch (quotaErr: any) {
+          console.warn('[Storage Quota] Storage calculation error:', quotaErr.message);
+        }
+      }
+
       try {
         const metadata = await extractVideoMetadata(req.file.path, req.file.originalname);
-        const mediaId = `med-${Date.now()}`;
-        const userId = req.user?.id || 'u-1';
+        const mediaId = 'med_' + crypto.randomUUID().replace(/-/g, '').substring(0, 16);
 
         await query(
-          `INSERT INTO uploaded_media (id, user_id, file_name, original_name, file_path, url, duration_seconds, formatted_duration, resolution, format, file_size_bytes, thumbnail_url)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          `INSERT INTO uploaded_media (id, user_id, file_name, original_name, file_path, url, duration_seconds, formatted_duration, resolution, format, file_size_bytes, thumbnail_url, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)`,
           [mediaId, userId, req.file.filename, req.file.originalname, req.file.path, `/media/${req.file.filename}`, metadata.durationSeconds, metadata.formattedDuration, metadata.resolution, metadata.format, metadata.fileSizeBytes, metadata.thumbnailUrl]
         );
+
+        const fileObj = {
+          id: mediaId,
+          userId,
+          fileName: req.file.filename,
+          originalName: req.file.originalname,
+          filePath: req.file.path,
+          url: `/media/${req.file.filename}`,
+          ...metadata
+        };
 
         res.status(201).json({
           success: true,
           message: 'Video uploaded and analyzed successfully with FFprobe.',
-          file: {
-            id: mediaId,
-            fileName: req.file.filename,
-            originalName: req.file.originalname,
-            filePath: req.file.path,
-            url: `/media/${req.file.filename}`,
-            ...metadata
-          }
+          file: fileObj,
+          media: fileObj
         });
       } catch (analysisErr: any) {
-        // Clean up unparseable file
+        // Clean up unparseable file and thumbnail
         try { fs.unlinkSync(req.file.path); } catch {}
         res.status(400).json({
           success: false,
@@ -631,13 +839,16 @@ async function startServer() {
   // 5. LIVE STREAMS & FFMPEG BROADCAST ENGINE (PostgreSQL)
   // ----------------------------------------------------
   app.get('/api/streams', authenticateToken, async (req: AuthenticatedRequest, res) => {
-    const userId = req.user?.id || 'u-1';
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
     const isSuperAdmin = req.user?.role === 'super_admin';
 
     try {
       const q = isSuperAdmin
         ? 'SELECT * FROM live_streams ORDER BY created_at DESC'
-        : 'SELECT * FROM live_streams WHERE user_id = $1 OR user_id = \'u-1\' ORDER BY created_at DESC';
+        : 'SELECT * FROM live_streams WHERE user_id = $1 ORDER BY created_at DESC';
       const sRes = await query(q, isSuperAdmin ? [] : [userId]);
 
       const streams = sRes.rows.map(s => ({
@@ -670,6 +881,11 @@ async function startServer() {
   });
 
   app.post('/api/streams', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+
     const {
       title,
       playlistId,
@@ -683,6 +899,52 @@ async function startServer() {
       privacy,
       thumbnail
     } = req.body;
+
+    // Verify user plan permissions (e.g. Dual RTMP feature)
+    let userPlan = 'Basic';
+    let isSuperAdmin = req.user?.role === 'super_admin';
+    try {
+      const uRes = await query('SELECT plan, role FROM users WHERE id = $1', [userId]);
+      if (uRes.rows.length > 0) {
+        userPlan = uRes.rows[0].plan || 'Basic';
+        if (uRes.rows[0].role === 'super_admin') isSuperAdmin = true;
+      }
+    } catch {}
+
+    const limits = getPlanLimits(userPlan);
+    const strDual = Boolean(isDualStream);
+
+    if (strDual && !limits.dualStream && !isSuperAdmin) {
+      return res.status(400).json({
+        success: false,
+        message: `Dual RTMP streaming is not available on the ${limits.name} plan. Please upgrade to Pro or Business to broadcast to multiple platforms simultaneously.`
+      });
+    }
+
+    // Verify playlist ownership or auto-create from stream title
+    let strPlId = playlistId || null;
+    if (strPlId) {
+      const plCheck = await query('SELECT user_id FROM playlists WHERE id = $1', [strPlId]);
+      if (plCheck.rows.length === 0) {
+        const autoPlId = 'pl_' + crypto.randomUUID().replace(/-/g, '').substring(0, 16);
+        await query(
+          `INSERT INTO playlists (id, user_id, name, description, status, is_live_loop, total_videos, total_runtime, thumbnail, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, 'Active', true, 0, '00:00', $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [autoPlId, userId, title || 'Stream Playlist', req.body.description || '', thumbnail || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80']
+        );
+        strPlId = autoPlId;
+      } else if (plCheck.rows[0].user_id !== userId && !isSuperAdmin) {
+        return res.status(403).json({ success: false, message: 'Access denied: Selected playlist belongs to another user.' });
+      }
+    } else {
+      const autoPlId = 'pl_' + crypto.randomUUID().replace(/-/g, '').substring(0, 16);
+      await query(
+        `INSERT INTO playlists (id, user_id, name, description, status, is_live_loop, total_videos, total_runtime, thumbnail, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'Active', true, 0, '00:00', $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [autoPlId, userId, title || 'Stream Playlist', req.body.description || '', thumbnail || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80']
+      );
+      strPlId = autoPlId;
+    }
 
     let cleanStreamUrl = (streamUrl || 'rtmp://a.rtmp.youtube.com/live2').trim();
     let cleanStreamKey = (streamKey || '').trim();
@@ -701,24 +963,32 @@ async function startServer() {
     cleanStreamUrl = cleanStreamUrl.replace(/\/+$/, '');
     cleanStreamKey = cleanStreamKey.replace(/^\/+/, '');
 
-    const encryptedKey = encryptStreamKey(cleanStreamKey);
-    const newId = `str-${Date.now()}`;
-    const userId = req.user?.id || 'u-1';
+    if (!cleanStreamKey) {
+      return res.status(400).json({ success: false, message: 'Valid YouTube RTMP stream key is required.' });
+    }
+
+    let encryptedKey;
+    try {
+      encryptedKey = encryptStreamKey(cleanStreamKey);
+    } catch (cryptErr: any) {
+      return res.status(400).json({ success: false, message: cryptErr.message });
+    }
+
+    const newId = 'str_' + crypto.randomUUID().replace(/-/g, '').substring(0, 16);
     const strTitle = title || 'Untitled 24/7 Stream';
-    const strPlId = playlistId || null;
+    // strPlId is already resolved to either existing or auto-created playlist
     const strThumb = thumbnail || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80';
     const strRes = resolution || '1080p60';
     const strBit = bitrate || '4500 kbps';
     const strUrl = cleanStreamUrl;
-    const strDual = Boolean(isDualStream);
     const strBackup = backupRtmpUrl || '';
     const strCat = category || 'Music';
     const strPriv = privacy || 'Public';
 
     try {
       await query(
-        `INSERT INTO live_streams (id, user_id, title, playlist_id, thumbnail, status, viewers, resolution, bitrate, stream_url, is_dual_stream, backup_rtmp_url, category, privacy, encrypted_key_cipher, encrypted_key_iv, encrypted_key_tag)
-         VALUES ($1, $2, $3, $4, $5, 'scheduled', 0, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+        `INSERT INTO live_streams (id, user_id, title, playlist_id, thumbnail, status, viewers, resolution, bitrate, stream_url, is_dual_stream, backup_rtmp_url, category, privacy, encrypted_key_cipher, encrypted_key_iv, encrypted_key_tag, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, 'scheduled', 0, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
         [newId, userId, strTitle, strPlId, strThumb, strRes, strBit, strUrl, strDual, strBackup, strCat, strPriv, encryptedKey.cipherText, encryptedKey.iv, encryptedKey.authTag]
       );
 
@@ -739,7 +1009,7 @@ async function startServer() {
           backupRtmpUrl: strBackup,
           category: strCat,
           privacy: strPriv,
-          encryptedKey,
+          maskedStreamKey: maskStreamKey(cleanStreamKey),
           startedAt: null
         }
       });
@@ -748,7 +1018,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/streams/:id/start', authenticateToken, async (req, res) => {
+  app.post('/api/streams/:id/start', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const { id } = req.params;
     try {
       const sRes = await query('SELECT * FROM live_streams WHERE id = $1', [id]);
@@ -757,6 +1027,42 @@ async function startServer() {
       }
 
       const stream = sRes.rows[0];
+      const isSuperAdmin = req.user?.role === 'super_admin';
+      if (stream.user_id !== req.user?.id && !isSuperAdmin) {
+        return res.status(403).json({ success: false, message: 'Access denied: You do not own this live stream.' });
+      }
+
+      // Check user subscription limits for concurrent live streams and dual stream access
+      let userPlan = 'Basic';
+      try {
+        const uRes = await query('SELECT plan, role FROM users WHERE id = $1', [stream.user_id]);
+        if (uRes.rows.length > 0) {
+          userPlan = uRes.rows[0].plan || 'Basic';
+        }
+      } catch {}
+
+      const limits = getPlanLimits(userPlan);
+
+      if (stream.is_dual_stream && !limits.dualStream && !isSuperAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: `Dual RTMP streaming is not permitted on the ${limits.name} plan. Please upgrade to Pro or Business.`
+        });
+      }
+
+      if (!isSuperAdmin) {
+        const liveCountRes = await query(
+          "SELECT COUNT(*)::int as count FROM live_streams WHERE user_id = $1 AND status = 'live' AND id != $2",
+          [stream.user_id, id]
+        );
+        const activeCount = liveCountRes.rows[0]?.count || 0;
+        if (activeCount >= limits.maxStreams) {
+          return res.status(400).json({
+            success: false,
+            message: `Simultaneous live stream limit reached (${limits.maxStreams} stream${limits.maxStreams > 1 ? 's' : ''} max for ${limits.name} plan). Please stop an active broadcast or upgrade your subscription plan.`
+          });
+        }
+      }
 
       // Resolve video paths from stream's playlist in database
       let videoPaths: string[] = [];
@@ -774,17 +1080,12 @@ async function startServer() {
         }
       }
 
-      // Check uploads/media storage for local files
+      // Strict Validation: If playlist has no valid video files on disk, do not start stream. Never scan random files.
       if (videoPaths.length === 0) {
-        const mediaUploadDir = process.env.MEDIA_UPLOAD_DIR || path.resolve(process.cwd(), 'uploads/media');
-        if (fs.existsSync(mediaUploadDir)) {
-          const files = fs.readdirSync(mediaUploadDir)
-            .filter(f => /\.(mp4|mkv|mov|flv|ts|avi)$/i.test(f))
-            .map(f => path.join(mediaUploadDir, f));
-          if (files.length > 0) {
-            videoPaths = files;
-          }
-        }
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot start stream: The playlist contains no valid video files on server disk. Please upload video files to the playlist first.'
+        });
       }
 
       const stats = await streamManager.startStream({
@@ -818,9 +1119,17 @@ async function startServer() {
     }
   });
 
-  app.post('/api/streams/:id/stop', authenticateToken, async (req, res) => {
+  app.post('/api/streams/:id/stop', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const { id } = req.params;
     try {
+      const sRes = await query('SELECT user_id FROM live_streams WHERE id = $1', [id]);
+      if (sRes.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Stream not found.' });
+      }
+      if (sRes.rows[0].user_id !== req.user?.id && req.user?.role !== 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Access denied: You do not own this live stream.' });
+      }
+
       await streamManager.stopStream(id);
       await query("UPDATE live_streams SET status = 'stopped' WHERE id = $1", [id]);
       res.json({ success: true, message: 'Stream stopped successfully.' });
@@ -829,9 +1138,17 @@ async function startServer() {
     }
   });
 
-  app.post('/api/streams/:id/restart', authenticateToken, async (req, res) => {
+  app.post('/api/streams/:id/restart', authenticateToken, async (req: AuthenticatedRequest, res) => {
     const { id } = req.params;
     try {
+      const sRes = await query('SELECT user_id FROM live_streams WHERE id = $1', [id]);
+      if (sRes.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Stream not found.' });
+      }
+      if (sRes.rows[0].user_id !== req.user?.id && req.user?.role !== 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Access denied: You do not own this live stream.' });
+      }
+
       const stats = await streamManager.restartStream(id);
       if (stats.state === 'running' && stats.pid) {
         await query("UPDATE live_streams SET status = 'live' WHERE id = $1", [id]);
@@ -850,7 +1167,37 @@ async function startServer() {
     }
   });
 
-  app.get('/api/streams/:id/metrics', authenticateToken, (req, res) => {
+  app.delete('/api/streams/:id', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    const { id } = req.params;
+    try {
+      const sRes = await query('SELECT user_id FROM live_streams WHERE id = $1', [id]);
+      if (sRes.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Stream not found.' });
+      }
+      if (sRes.rows[0].user_id !== req.user?.id && req.user?.role !== 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Access denied: You do not own this live stream.' });
+      }
+
+      try {
+        await streamManager.stopStream(id);
+      } catch {}
+
+      await query('DELETE FROM live_streams WHERE id = $1', [id]);
+      res.json({ success: true, message: 'Stream deleted successfully.' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/streams/:id/metrics', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    const sRes = await query('SELECT user_id FROM live_streams WHERE id = $1', [req.params.id]);
+    if (sRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Stream not found.' });
+    }
+    if (sRes.rows[0].user_id !== req.user?.id && req.user?.role !== 'super_admin') {
+      return res.status(403).json({ success: false, message: 'Access denied.' });
+    }
+
     const stats = streamManager.getStreamStats(req.params.id);
     res.json({ success: true, stats });
   });
@@ -863,13 +1210,16 @@ async function startServer() {
   });
 
   app.get('/api/billing/transactions', authenticateToken, async (req: AuthenticatedRequest, res) => {
-    const userId = req.user?.id || 'u-1';
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
     const isSuperAdmin = req.user?.role === 'super_admin';
 
     try {
       const q = isSuperAdmin
         ? 'SELECT * FROM transactions ORDER BY created_at DESC'
-        : 'SELECT * FROM transactions WHERE user_id = $1 OR user_id = \'u-1\' ORDER BY created_at DESC';
+        : 'SELECT * FROM transactions WHERE user_id = $1 ORDER BY created_at DESC';
       const txRes = await query(q, isSuperAdmin ? [] : [userId]);
 
       const transactions = txRes.rows.map(t => ({
@@ -925,15 +1275,18 @@ async function startServer() {
       });
     }
 
-    const userId = req.user?.id || 'u-1';
-    const newTxId = `tx-${Date.now()}`;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+    const newTxId = 'tx_' + crypto.randomUUID().replace(/-/g, '').substring(0, 16);
     const invoiceNumber = `INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
     const dateStr = new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
 
     try {
       await query(
-        `INSERT INTO transactions (id, user_id, invoice_number, plan, amount_usd, amount_bdt, currency, status, gateway, transaction_ref, date_str)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        `INSERT INTO transactions (id, user_id, invoice_number, plan, amount_usd, amount_bdt, currency, status, gateway, transaction_ref, date_str, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP)`,
         [newTxId, userId, invoiceNumber, `${selectedPlan.name} Plan (Monthly)`, selectedPlan.priceUSD, verificationResult.amount, verificationResult.currency, 'Paid', verificationResult.gateway, verificationResult.transactionId, dateStr]
       );
 
@@ -1073,7 +1426,7 @@ async function startServer() {
 
     try {
       await query(
-        'INSERT INTO activity_logs (id, user_name, action, category, ip_address) VALUES ($1, $2, $3, $4, $5)',
+        'INSERT INTO activity_logs (id, user_name, action, category, ip_address, created_at) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)',
         [newId, userName, action, category, ipAddress]
       );
       res.status(201).json({
