@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Youtube,
   Radio,
   Play,
+  Pause,
   ArrowRight,
   ShieldCheck,
   Zap,
@@ -15,28 +16,40 @@ import {
   CheckCircle2,
   Users,
   Eye,
-  Sparkles
+  Sparkles,
+  Check,
+  X,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 
 export const HomePage: React.FC = () => {
-  const { navigate, streams, setActiveViewingStream } = useApp();
+  const { navigate, currency, setCurrency, formatPrice, plans, homepageDemoConfig } = useApp();
+  const [isDemoModalOpen, setIsDemoModalOpen] = useState(false);
+  const [isDemoPlaying, setIsDemoPlaying] = useState(true);
+  const [isDemoMuted, setIsDemoMuted] = useState(true);
+  const demoVideoRef = useRef<HTMLVideoElement>(null);
+
+  const demoConfig = homepageDemoConfig || {
+    title: 'Relaxing LoFi Music 24/7',
+    channelName: 'Music World',
+    viewersText: '1.2K watching',
+    videoUrl: '/uploads/media/video-Music_video_animating_storyboard____1080-1793964845416-990953612.mp4',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=900&auto=format&fit=crop&q=80',
+    resolution: '1080p · 60 FPS',
+    bitrate: '4,500 kbps'
+  };
+
+  const handleChoosePlan = (planId: 'basic' | 'pro' | 'business') => {
+    try {
+      localStorage.setItem('streamjoin_selected_plan', planId);
+    } catch {}
+    navigate('public/register');
+  };
 
   const handleSeeDemo = () => {
-    // Open the first live stream in full broadcast modal
-    const liveStream = streams.find(s => s.status === 'live') || streams[0] || {
-      id: 'demo-showcase',
-      title: 'Relaxing Lo-Fi Ambient Beats 24/7',
-      thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80',
-      channelName: 'Stream Join Official',
-      status: 'live' as const,
-      viewers: 1250,
-      views: '45.2K',
-      date: 'Today',
-      resolution: '1080p60',
-      bitrate: '4500 kbps',
-      rtmpUrl: 'rtmp://a.rtmp.youtube.com/live2'
-    };
-    setActiveViewingStream(liveStream);
+    setIsDemoModalOpen(true);
+    setIsDemoPlaying(true);
   };
 
   const featureCards = [
@@ -91,7 +104,7 @@ export const HomePage: React.FC = () => {
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white leading-[1.12]">
               Grow Your YouTube Live Stream with{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF1B6B] via-[#FF4585] to-[#E11D48]">
-                Stream Join
+                Stream Allow
               </span>
             </h1>
 
@@ -101,8 +114,8 @@ export const HomePage: React.FC = () => {
 
             <div className="flex flex-wrap items-center gap-4 pt-2">
               <button
-                onClick={() => navigate('public/pricing')}
-                className="px-7 py-3.5 rounded-xl font-bold text-white gradient-brand hover:opacity-95 shadow-xl shadow-rose-500/25 flex items-center gap-2.5 transition-all transform active:scale-95"
+                onClick={() => navigate('public/register')}
+                className="px-7 py-3.5 rounded-xl font-bold text-white gradient-brand hover:opacity-95 shadow-xl shadow-rose-500/25 flex items-center gap-2.5 transition-all transform active:scale-95 cursor-pointer"
               >
                 <span>Get Started</span>
                 <ArrowRight className="w-4 h-4" />
@@ -140,7 +153,7 @@ export const HomePage: React.FC = () => {
                     <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
                     <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                    <span className="ml-2 text-xs font-mono text-slate-400">streamjoin.cloud/live/control-center</span>
+                    <span className="ml-2 text-xs font-mono text-slate-400">streamallow.cloud/live/control-center</span>
                   </div>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-600 text-white flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
@@ -151,8 +164,11 @@ export const HomePage: React.FC = () => {
                 {/* Simulated Live Studio Broadcast */}
                 <div className="relative aspect-video group cursor-pointer" onClick={handleSeeDemo}>
                   <img
-                    src="https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=900&auto=format&fit=crop&q=80"
-                    alt="Stream Join Live Broadcast"
+                    src={demoConfig.thumbnailUrl}
+                    alt={demoConfig.title}
+                    onError={(e) => {
+                      e.currentTarget.src = 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=900&auto=format&fit=crop&q=80';
+                    }}
                     className="w-full h-full object-cover brightness-[0.7] group-hover:scale-105 transition-transform duration-500"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black via-black/30 to-transparent" />
@@ -167,11 +183,11 @@ export const HomePage: React.FC = () => {
                   {/* Live overlay tags */}
                   <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between text-xs text-white">
                     <div>
-                      <p className="font-bold text-sm">Relaxing LoFi Music 24/7</p>
-                      <p className="text-slate-300 text-[11px]">Channel: Music World · 1.2K watching</p>
+                      <p className="font-bold text-sm">{demoConfig.title}</p>
+                      <p className="text-slate-300 text-[11px]">Channel: {demoConfig.channelName} · {demoConfig.viewersText}</p>
                     </div>
                     <div className="bg-black/60 px-2.5 py-1 rounded backdrop-blur border border-white/10 font-mono text-[11px]">
-                      1080p · 60 FPS
+                      {demoConfig.resolution}
                     </div>
                   </div>
                 </div>
@@ -257,7 +273,7 @@ export const HomePage: React.FC = () => {
         <div className="p-8 sm:p-12 rounded-3xl bg-gradient-to-b from-[#101728] to-[#0A0E18] border border-slate-800 space-y-10">
           <div className="text-center space-y-2">
             <span className="text-xs font-bold uppercase tracking-widest text-[#FF1B6B]">Fast Onboarding</span>
-            <h3 className="text-2xl sm:text-3xl font-extrabold text-white">How Stream Join Works</h3>
+            <h3 className="text-2xl sm:text-3xl font-extrabold text-white">How Stream Allow Works</h3>
             <p className="text-xs sm:text-sm text-slate-400">Get started in just a few simple steps and launch your live broadcast.</p>
           </div>
 
@@ -280,23 +296,239 @@ export const HomePage: React.FC = () => {
         </div>
       </section>
 
+      {/* Pricing Section on Home Page */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+        <div className="text-center space-y-4 max-w-2xl mx-auto">
+          <span className="text-xs font-bold uppercase tracking-widest text-[#FF1B6B]">Flexible Plans</span>
+          <h2 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+            Simple & Affordable Pricing
+          </h2>
+          <p className="text-slate-400 text-sm sm:text-base">
+            Choose the best plan for your YouTube live streaming needs.
+          </p>
+
+          {/* Currency Switcher */}
+          <div className="inline-flex items-center gap-2 p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold">
+            <button
+              onClick={() => setCurrency('BDT')}
+              className={`px-4 py-2 rounded-lg transition-all cursor-pointer ${
+                currency === 'BDT'
+                  ? 'bg-gradient-to-r from-[#FF1B6B] to-[#E11D48] text-white shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              BDT (৳ - Bangladesh Taka)
+            </button>
+            <button
+              onClick={() => setCurrency('USD')}
+              className={`px-4 py-2 rounded-lg transition-all cursor-pointer ${
+                currency === 'USD'
+                  ? 'bg-gradient-to-r from-[#FF1B6B] to-[#E11D48] text-white shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              USD ($ - International)
+            </button>
+          </div>
+        </div>
+
+        {/* 3 Pricing Cards Grid: Basic, Pro, Business */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
+          {plans.map((p) => {
+            const isPro = p.id === 'pro';
+            return (
+              <div
+                key={p.id}
+                className={`relative rounded-3xl p-8 flex flex-col justify-between transition-all ${
+                  isPro
+                    ? 'bg-gradient-to-b from-[#141C2E] to-[#0D1322] border-2 border-[#FF1B6B] shadow-2xl shadow-rose-950/40 md:-translate-y-2'
+                    : 'bg-[#0F1626]/80 border border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                {/* Most Popular Badge */}
+                {isPro && (
+                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider bg-gradient-to-r from-[#FF1B6B] to-[#E11D48] text-white shadow-md">
+                    Most Popular
+                  </div>
+                )}
+
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-xl font-bold text-white">{p.name}</h3>
+                    <p className="text-xs text-slate-400 mt-1">{p.tagline}</p>
+                  </div>
+
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-4xl sm:text-5xl font-black text-white">
+                      {formatPrice(p.priceUSD, p.priceBDT)}
+                    </span>
+                    <span className="text-xs text-slate-400">/month</span>
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-800/80 space-y-3 text-xs sm:text-sm">
+                    {p.features.map((feat, idx) => (
+                      <div key={idx} className="flex items-start gap-2.5 text-slate-300">
+                        <Check className={`w-4 h-4 shrink-0 mt-0.5 ${isPro ? 'text-[#FF1B6B]' : 'text-emerald-400'}`} />
+                        <span>{feat}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-8">
+                  <button
+                    onClick={() => handleChoosePlan(p.id)}
+                    className={`w-full py-3.5 px-4 rounded-xl font-bold text-sm transition-all transform active:scale-95 cursor-pointer ${
+                      isPro
+                        ? 'text-white gradient-brand hover:opacity-95 shadow-lg shadow-rose-600/30'
+                        : 'text-white bg-slate-850 hover:bg-slate-700 border border-slate-700 bg-slate-900'
+                    }`}
+                  >
+                    Get Started
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
       {/* CTA Banner */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="relative rounded-3xl overflow-hidden p-8 sm:p-12 bg-gradient-to-r from-[#FF1B6B]/90 via-[#E11D48] to-[#9333EA] text-white shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="space-y-2 text-center md:text-left">
             <h3 className="text-2xl sm:text-3xl font-extrabold">Ready to Boost Your YouTube Watch Time?</h3>
             <p className="text-sm text-white/90 max-w-lg">
-              Join 10,000+ creators and media channels broadcasting live around the clock with Stream Join.
+              Join 10,000+ creators and media channels broadcasting live around the clock with Stream Allow.
             </p>
           </div>
           <button
-            onClick={() => navigate('public/pricing')}
-            className="px-8 py-3.5 rounded-xl font-bold text-slate-900 bg-white hover:bg-slate-100 shadow-xl transition-all transform active:scale-95 shrink-0"
+            onClick={() => navigate('public/register')}
+            className="px-8 py-3.5 rounded-xl font-bold text-slate-900 bg-white hover:bg-slate-100 shadow-xl transition-all transform active:scale-95 shrink-0 cursor-pointer"
           >
             Start Free Trial
           </button>
         </div>
       </section>
+
+      {/* Homepage Dedicated Demo Preview Modal (Isolated from Dashboard Real Streams) */}
+      {isDemoModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/85 backdrop-blur-md animate-fadeIn">
+          <div className="relative w-full max-w-4xl bg-[#0D131F] border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-[#111827]/90">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#FF1B6B] to-[#FF4585] flex items-center justify-center text-white shadow-lg shadow-rose-500/20">
+                  <Radio className="w-5 h-5 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-white text-base sm:text-lg">
+                      {demoConfig.title}
+                    </h3>
+                    <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-600 text-white uppercase tracking-wider flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                      DEMO PREVIEW
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Channel: {demoConfig.channelName} · 24/7 Cloud RTMP Simulation · {demoConfig.resolution} · Zero Buffer
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsDemoModalOpen(false)}
+                className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Close demo"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Video Player Display */}
+            <div className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
+              <video
+                key={demoConfig.videoUrl}
+                ref={demoVideoRef}
+                src={demoConfig.videoUrl}
+                poster={demoConfig.thumbnailUrl}
+                className="w-full h-full object-cover"
+                autoPlay
+                loop
+                muted={isDemoMuted}
+                playsInline
+              />
+
+              {/* Top simulation badge */}
+              <div className="absolute top-4 left-4 flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 text-xs text-white pointer-events-none">
+                <Users className="w-3.5 h-3.5 text-rose-400" />
+                <span>{demoConfig.viewersText} in demo</span>
+              </div>
+
+              <div className="absolute top-4 right-4 flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 text-xs text-emerald-400 pointer-events-none">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Cloud Server Active · 0% Buffer</span>
+              </div>
+
+              {/* Bottom Player Controls Bar */}
+              <div className="absolute bottom-0 inset-x-0 p-4 bg-gradient-to-t from-black/95 via-black/60 to-transparent flex items-center justify-between z-10">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (demoVideoRef.current) {
+                        if (isDemoPlaying) {
+                          demoVideoRef.current.pause();
+                        } else {
+                          demoVideoRef.current.play().catch(() => {});
+                        }
+                      }
+                      setIsDemoPlaying(!isDemoPlaying);
+                    }}
+                    className="w-9 h-9 rounded-full bg-white text-slate-900 flex items-center justify-center hover:bg-slate-200 transition-colors shadow-lg cursor-pointer"
+                  >
+                    {isDemoPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (demoVideoRef.current) {
+                        demoVideoRef.current.muted = !isDemoMuted;
+                      }
+                      setIsDemoMuted(!isDemoMuted);
+                    }}
+                    className="p-2 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                    title={isDemoMuted ? 'Unmute' : 'Mute'}
+                  >
+                    {isDemoMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                  </button>
+
+                  <span className="text-xs text-slate-300 font-mono">
+                    {isDemoPlaying ? 'PREVIEW ACTIVE' : 'PAUSED'} · 1080p60 · 4,500 kbps
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsDemoModalOpen(false);
+                      navigate('public/register');
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-white gradient-brand hover:opacity-95 shadow-md shadow-rose-600/30 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Get Started Free</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

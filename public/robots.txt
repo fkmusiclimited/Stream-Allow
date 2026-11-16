@@ -1,0 +1,24 @@
+# Stream Allow Robots Directives
+User-agent: *
+Allow: /
+Allow: /about
+Allow: /features
+Allow: /pricing
+Allow: /how-it-works
+Allow: /services
+Allow: /blog
+Allow: /faq
+Allow: /contact
+Allow: /terms-privacy
+
+# Disallow Private Dashboards, Login, & APIs
+Disallow: /admin/
+Disallow: /user/
+Disallow: /api/
+Disallow: /public/login
+Disallow: /public/register
+Disallow: /login
+Disallow: /register
+
+# Official XML Sitemap URL
+Sitemap: https://streamallow.com/sitemap.xml

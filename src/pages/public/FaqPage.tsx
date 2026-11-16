@@ -19,7 +19,7 @@ export const FaqPage: React.FC = () => {
           Frequently Asked Questions
         </h1>
         <p className="text-slate-400 text-sm sm:text-base">
-          Find answers to common questions about Stream Join.
+          Find answers to common questions about Stream Allow.
         </p>
       </div>
 

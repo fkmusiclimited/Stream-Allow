@@ -1,6 +1,5 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
@@ -8,7 +7,45 @@ export default defineConfig(() => {
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': import.meta.dirname,
+      },
+    },
+    build: {
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: 'react-vendor',
+                test: /node_modules[\\/](react|react-dom)[\\/]/,
+              },
+              {
+                name: 'icons-vendor',
+                test: /node_modules[\\/]lucide-react[\\/]/,
+              },
+              {
+                name: 'motion-vendor',
+                test: /node_modules[\\/]motion[\\/]/,
+              },
+              {
+                name: 'admin-pages',
+                test: /src[\\/]pages[\\/]admin[\\/]/,
+              },
+              {
+                name: 'user-pages',
+                test: /src[\\/]pages[\\/]user[\\/]/,
+              },
+              {
+                name: 'public-pages',
+                test: /src[\\/]pages[\\/]public[\\/]/,
+              },
+              {
+                name: 'app-data',
+                test: /src[\\/]data[\\/]/,
+              },
+            ],
+          },
+        },
       },
     },
     server: {

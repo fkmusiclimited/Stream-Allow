@@ -9,7 +9,10 @@ export const PricingPage: React.FC = () => {
   const [phoneOrCard, setPhoneOrCard] = useState('01712345678');
 
   const handleChoosePlan = (planId: 'basic' | 'pro' | 'business') => {
-    setSelectedPlanToBuy(planId);
+    try {
+      localStorage.setItem('streamjoin_selected_plan', planId);
+    } catch {}
+    navigate('public/register');
   };
 
   const handleConfirmPayment = (e: React.FormEvent) => {

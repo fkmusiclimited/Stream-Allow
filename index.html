@@ -3,29 +3,100 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Stream Join - YouTube Live Streaming Automation SaaS</title>
+    <title>Stream Allow - YouTube Live Streaming Automation SaaS</title>
     <meta name="description" content="Automate, manage, and grow your YouTube live streams easily. Professional 24/7 playlist streaming, multi-channel management, analytics, and monetization." />
-    <meta property="og:title" content="Stream Join - YouTube Live Streaming Automation SaaS" />
-    <meta property="og:description" content="Automate, manage, and grow your YouTube live streams easily. Professional 24/7 playlist streaming, multi-channel management, analytics, and monetization." />
+
+    <!-- Favicon & Touch Icons -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#FF1B6B" />
+
+    <!-- OpenGraph Social Cards -->
+    <meta property="og:site_name" content="Stream Allow" />
     <meta property="og:type" content="website" />
+    <meta property="og:title" content="Stream Allow - YouTube Live Streaming Automation SaaS" />
+    <meta property="og:description" content="Automate, manage, and grow your YouTube live streams easily. Professional 24/7 playlist streaming, multi-channel management, analytics, and monetization." />
+    <meta property="og:image" content="https://streamallow.com/logo-og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Stream Allow Live Streaming Automation Platform" />
+
+    <!-- Twitter Social Cards -->
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Stream Allow - YouTube Live Streaming Automation SaaS" />
+    <meta name="twitter:description" content="Automate, manage, and grow your YouTube live streams easily. Professional 24/7 playlist streaming, multi-channel management, analytics, and monetization." />
+    <meta name="twitter:image" content="https://streamallow.com/logo-og.png" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script type="application/ld+json">
-      {
-        "@context": "https://schema.org",
-        "@type": "SoftwareApplication",
-        "name": "Stream Join",
-        "operatingSystem": "All",
-        "applicationCategory": "MultimediaApplication",
-        "offers": {
-          "@type": "Offer",
-          "price": "9.00",
-          "priceCurrency": "USD"
+      [
+        {
+          "@context": "https://schema.org",
+          "@type": "Organization",
+          "name": "Stream Allow",
+          "url": "https://streamallow.com",
+          "logo": "https://streamallow.com/logo.png",
+          "image": "https://streamallow.com/logo-og.png",
+          "description": "Stream Allow is a premier 24/7 cloud streaming automation SaaS for YouTube creators, musicians, and broadcast networks.",
+          "contactPoint": {
+            "@type": "ContactPoint",
+            "contactType": "Customer Support",
+            "email": "support@streamallow.com"
+          }
         },
-        "description": "Automate, manage, and grow your YouTube live streams easily. Professional 24/7 playlist streaming, multi-channel management, analytics, and monetization."
+        {
+          "@context": "https://schema.org",
+          "@type": "WebSite",
+          "name": "Stream Allow",
+          "url": "https://streamallow.com",
+          "potentialAction": {
+            "@type": "SearchAction",
+            "target": "https://streamallow.com/?q={search_term_string}",
+            "query-input": "required name=search_term_string"
+          }
+        },
+        {
+          "@context": "https://schema.org",
+          "@type": "SoftwareApplication",
+          "name": "Stream Allow",
+          "operatingSystem": "All",
+          "applicationCategory": "MultimediaApplication",
+          "logo": "https://streamallow.com/logo.png",
+          "offers": {
+            "@type": "Offer",
+            "price": "9.00",
+            "priceCurrency": "USD"
+          },
+          "description": "Automate, manage, and grow your YouTube live streams easily. Professional 24/7 playlist streaming, multi-channel management, analytics, and monetization."
+        }
+      ]
+    </script>
+    <style>
+      html, body, #root {
+        min-height: 100vh;
+        background-color: #0B0F17 !important;
+        color: #F8FAFC;
+        margin: 0;
+        padding: 0;
       }
+      #root {
+        display: flex;
+        flex-direction: column;
+      }
+    </style>
+    <script>
+      window.addEventListener('error', function(e) {
+        console.error('[StreamAllow Window Error]:', e.error || e.message);
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        console.warn('[StreamAllow Unhandled Promise]:', e.reason);
+      });
     </script>
   </head>
   <body class="bg-[#0B0F17] text-slate-100 font-sans antialiased selection:bg-[#FF1B6B]/30 selection:text-white">

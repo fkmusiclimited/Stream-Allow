@@ -37,7 +37,7 @@ export const HowItWorksPage: React.FC = () => {
       <div className="text-center space-y-4 max-w-2xl mx-auto">
         <span className="text-xs font-bold uppercase tracking-widest text-[#FF1B6B]">Simple Onboarding</span>
         <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight">
-          How Stream Join Works
+          How Stream Allow Works
         </h1>
         <p className="text-slate-400 text-sm sm:text-base">
           Get started in just a few simple steps and start your YouTube live stream.
@@ -69,7 +69,7 @@ export const HowItWorksPage: React.FC = () => {
       {/* Cloud Automation vs OBS Comparison Card */}
       <div className="p-8 sm:p-12 rounded-3xl bg-[#0D1322] border border-slate-800 space-y-8">
         <div className="text-center space-y-2">
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-white">Why Stream Join Over Traditional PC Streaming?</h2>
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-white">Why Stream Allow Over Traditional PC Streaming?</h2>
           <p className="text-xs sm:text-sm text-slate-400">Save electricity, protect your computer, and ensure continuous live stream uptime.</p>
         </div>
 
@@ -85,7 +85,7 @@ export const HowItWorksPage: React.FC = () => {
           </div>
 
           <div className="p-6 rounded-2xl bg-emerald-950/20 border border-emerald-500/20 space-y-3">
-            <h4 className="font-bold text-emerald-400 text-base">Stream Join Cloud Infrastructure</h4>
+            <h4 className="font-bold text-emerald-400 text-base">Stream Allow Cloud Infrastructure</h4>
             <ul className="space-y-2 text-slate-300">
               <li>✅ Runs 24/7 on Google Cloud enterprise servers</li>
               <li>✅ 1 Gbps direct uplink into YouTube RTMP ingest</li>

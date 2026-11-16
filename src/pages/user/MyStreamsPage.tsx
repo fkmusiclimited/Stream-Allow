@@ -11,15 +11,35 @@ import {
   Search,
   CheckCircle2,
   Radio,
-  Clock
+  Clock,
+  ListVideo
 } from 'lucide-react';
 import { StreamStatus } from '../../types';
 
 export const MyStreamsPage: React.FC = () => {
-  const { userStreams, updateStreamStatus, deleteStream, navigate, setActiveViewingStream, showToast } = useApp();
+  const { userStreams, playlists, openPlaylistDetails, updateStreamStatus, stoppingStreamIds, deleteStream, navigate, setActiveViewingStream, showToast, fetchStreams } = useApp();
   const [activeTab, setActiveTab] = useState<'all' | 'live' | 'scheduled' | 'ended'>('all');
   const [search, setSearch] = useState('');
   const [actionMenuOpenId, setActionMenuOpenId] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    fetchStreams().catch(() => {});
+  }, []);
+
+  const handleOpenStreamPlaylist = (str: any) => {
+    let targetPlaylistId = str.playlistId;
+    if (!targetPlaylistId) {
+      const match = playlists.find(p => p.id === str.id || p.name.trim().toLowerCase() === str.title.trim().toLowerCase());
+      if (match) targetPlaylistId = match.id;
+    }
+    if (targetPlaylistId) {
+      openPlaylistDetails(targetPlaylistId);
+    } else if (playlists.length > 0) {
+      openPlaylistDetails(playlists[0].id);
+    } else {
+      openPlaylistDetails(str.id);
+    }
+  };
 
   const streamsList = userStreams || [];
 
@@ -30,8 +50,9 @@ export const MyStreamsPage: React.FC = () => {
       (activeTab === 'scheduled' && s.status === 'scheduled') ||
       (activeTab === 'ended' && (s.status === 'ended' || s.status === 'failed'));
 
-    const matchesSearch = s.title.toLowerCase().includes(search.toLowerCase()) ||
-      s.channelName.toLowerCase().includes(search.toLowerCase());
+    const q = search.toLowerCase();
+    const matchesSearch = (s.title || '').toLowerCase().includes(q) ||
+      (s.channelName || '').toLowerCase().includes(q);
 
     return matchesTab && matchesSearch;
   });
@@ -144,22 +165,25 @@ export const MyStreamsPage: React.FC = () => {
                 </tr>
               ) : (
                 filteredStreams.map((str) => (
-                <tr key={str.id} className="hover:bg-slate-900/50 transition-colors">
+                <tr
+                  key={str.id}
+                  onClick={() => handleOpenStreamPlaylist(str)}
+                  className="hover:bg-slate-900/60 transition-colors cursor-pointer group"
+                  title="Click to open playlist"
+                >
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-3">
                       <div
-                        onClick={() => setActiveViewingStream(str)}
-                        className="relative w-16 h-11 rounded-lg overflow-hidden shrink-0 cursor-pointer group"
+                        className="relative w-16 h-11 rounded-lg overflow-hidden shrink-0 group-hover:ring-2 group-hover:ring-[#FF1B6B]/40 transition-all"
                       >
                         <img src={str.thumbnail} alt={str.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
                         <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Play className="w-4 h-4 text-white fill-current" />
+                          <ListVideo className="w-4 h-4 text-white" />
                         </div>
                       </div>
                       <div>
                         <span
-                          onClick={() => setActiveViewingStream(str)}
-                          className="font-bold text-white hover:text-[#FF1B6B] cursor-pointer block text-xs"
+                          className="font-bold text-white group-hover:text-[#FF1B6B] transition-colors block text-xs"
                         >
                           {str.title}
                         </span>
@@ -209,10 +233,10 @@ export const MyStreamsPage: React.FC = () => {
                     )}
                   </td>
 
-                  <td className="py-3 px-4 text-right">
+                  <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="relative inline-block text-left">
                       <button
-                        onClick={() => setActionMenuOpenId(actionMenuOpenId === str.id ? null : str.id)}
+                        onClick={(e) => { e.stopPropagation(); setActionMenuOpenId(actionMenuOpenId === str.id ? null : str.id); }}
                         className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
                       >
                         <MoreVertical className="w-4 h-4" />
@@ -221,26 +245,40 @@ export const MyStreamsPage: React.FC = () => {
                       {actionMenuOpenId === str.id && (
                         <div className="absolute right-0 mt-1 w-44 bg-[#111827] border border-slate-800 rounded-xl shadow-2xl p-1 z-20 text-xs">
                           <button
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenStreamPlaylist(str);
+                              setActionMenuOpenId(null);
+                            }}
+                            className="w-full text-left p-2 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center gap-2"
+                          >
+                            <ListVideo className="w-3.5 h-3.5 text-[#FF1B6B]" />
+                            <span>Open Playlist</span>
+                          </button>
+
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setActiveViewingStream(str);
                               setActionMenuOpenId(null);
                             }}
                             className="w-full text-left p-2 rounded-lg hover:bg-slate-800 text-slate-200 flex items-center gap-2"
                           >
-                            <Play className="w-3.5 h-3.5 text-[#FF1B6B]" />
+                            <Play className="w-3.5 h-3.5 text-blue-400" />
                             <span>Preview Stream</span>
                           </button>
 
                           {str.status === 'live' ? (
                             <button
+                              disabled={stoppingStreamIds.includes(str.id)}
                               onClick={() => {
                                 updateStreamStatus(str.id, 'ended');
                                 setActionMenuOpenId(null);
                               }}
-                              className="w-full text-left p-2 rounded-lg hover:bg-slate-800 text-amber-400 flex items-center gap-2"
+                              className="w-full text-left p-2 rounded-lg hover:bg-slate-800 text-amber-400 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                             >
                               <Pause className="w-3.5 h-3.5" />
-                              <span>Stop Broadcast</span>
+                              <span>{stoppingStreamIds.includes(str.id) ? 'Stopping...' : 'Stop Broadcast'}</span>
                             </button>
                           ) : (
                             <button
@@ -257,7 +295,7 @@ export const MyStreamsPage: React.FC = () => {
 
                           <button
                             onClick={() => {
-                              navigator.clipboard?.writeText(str.streamKey || 'live_streamjoin_key');
+                              navigator.clipboard?.writeText(str.streamKey || 'live_streamallow_key');
                               showToast('Stream Key copied to clipboard!', 'success');
                               setActionMenuOpenId(null);
                             }}

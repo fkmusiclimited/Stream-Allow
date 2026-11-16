@@ -26,15 +26,17 @@ export const Footer: React.FC = () => {
               onClick={() => navigate('public/home')}
               className="flex items-center gap-3 cursor-pointer"
             >
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#FF1B6B] to-[#E11D48] flex items-center justify-center text-white shadow-lg shadow-rose-500/20">
-                <Radio className="w-5 h-5" />
-              </div>
+              <img
+                src="/logo-icon.png"
+                alt="Stream Allow Logo"
+                className="w-9 h-9 rounded-xl shadow-lg shadow-rose-500/20 object-contain"
+              />
               <span className="text-xl font-extrabold tracking-tight text-white">
-                Stream <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF1B6B] to-[#FF5E8E]">Join</span>
+                Stream <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF1B6B] to-[#FF5E8E]">Allow</span>
               </span>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed max-w-sm">
-              Stream Join is an international-standard cloud streaming automation platform for YouTube creators, record labels, and broadcasters. Stream continuous playlists 24/7 with zero local CPU overhead.
+              Stream Allow is an international-standard cloud streaming automation platform for YouTube creators, record labels, and broadcasters. Stream continuous playlists 24/7 with zero local CPU overhead.
             </p>
             <div className="flex items-center gap-3 text-slate-400">
               <span className="p-2 rounded-lg bg-slate-900 border border-slate-800 hover:text-white cursor-pointer transition-colors">
@@ -108,7 +110,7 @@ export const Footer: React.FC = () => {
         </div>
 
         <div className="mt-12 pt-8 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
-          <p>© {new Date().getFullYear()} Stream Join. All rights reserved. BDT & USD billing ready.</p>
+          <p>© {new Date().getFullYear()} Stream Allow. All rights reserved. BDT & USD billing ready.</p>
           <div className="flex items-center gap-6">
             <button onClick={() => navigate('public/terms')} className="hover:text-slate-300">Terms</button>
             <button onClick={() => navigate('public/privacy')} className="hover:text-slate-300">Privacy</button>

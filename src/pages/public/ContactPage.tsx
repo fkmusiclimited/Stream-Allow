@@ -43,7 +43,7 @@ export const ContactPage: React.FC = () => {
             </div>
             <div>
               <h4 className="font-bold text-white text-base">Email</h4>
-              <p className="text-xs text-slate-400 mt-0.5">support@streamjoin.com</p>
+              <p className="text-xs text-slate-400 mt-0.5">support@streamallow.com</p>
               <p className="text-[11px] text-slate-500 mt-2">Average response time: &lt; 30 mins</p>
             </div>
           </div>
@@ -65,7 +65,7 @@ export const ContactPage: React.FC = () => {
             </div>
             <div>
               <h4 className="font-bold text-white text-base">Business Inquiry</h4>
-              <p className="text-xs text-slate-400 mt-0.5">business@streamjoin.com</p>
+              <p className="text-xs text-slate-400 mt-0.5">business@streamallow.com</p>
               <p className="text-[11px] text-slate-500 mt-2">Enterprise bulk streaming & custom agreements</p>
             </div>
           </div>

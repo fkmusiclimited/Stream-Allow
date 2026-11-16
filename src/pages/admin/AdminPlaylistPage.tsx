@@ -10,13 +10,13 @@ import {
 } from 'lucide-react';
 
 export const AdminPlaylistPage: React.FC = () => {
-  const { playlists, deletePlaylist, openPlaylistDetails, showToast } = useApp();
+  const { playlists, streams, deletePlaylist, openPlaylistDetails, showToast } = useApp();
   const [filter, setFilter] = useState<'all' | 'active' | 'scheduled' | 'ended'>('all');
   const [search, setSearch] = useState('');
 
   const filteredPlaylists = playlists.filter(p => {
-    const matchesTab = filter === 'all' || p.status.toLowerCase() === filter;
-    const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase());
+    const matchesTab = filter === 'all' || (p.status || '').toLowerCase() === filter;
+    const matchesSearch = (p.name || '').toLowerCase().includes(search.toLowerCase());
     return matchesTab && matchesSearch;
   });
 
@@ -94,37 +94,61 @@ export const AdminPlaylistPage: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                filteredPlaylists.map((pl, idx) => (
-                  <tr key={pl.id} className="hover:bg-slate-900/40 transition-colors">
-                    <td className="py-3 px-4 font-mono text-slate-500">{idx + 1}</td>
+                filteredPlaylists.map((pl, idx) => {
+                  const isLive = (streams || []).some(s => (s.playlistId === pl.id || s.id === pl.id) && s.status === 'live');
 
-                    <td className="py-3 px-4">
-                      <img
-                        src={pl.thumbnail}
-                        alt={pl.name}
-                        onClick={() => openPlaylistDetails(pl.id)}
-                        className="w-14 h-10 rounded-lg object-cover cursor-pointer hover:opacity-80 transition-opacity"
-                      />
-                    </td>
+                  const DEFAULT_DEMO_THUMBNAIL = 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80';
+                  const hasVideos = (pl.videos && pl.videos.length > 0) || (pl.videosCount && pl.videosCount > 0);
+                  const firstVideoCover = pl.videos?.[0]?.thumbnail || (pl.videos?.[0] as any)?.thumbnailUrl;
+                  const playlistCover = hasVideos
+                    ? (firstVideoCover || pl.thumbnail || DEFAULT_DEMO_THUMBNAIL)
+                    : DEFAULT_DEMO_THUMBNAIL;
 
-                    <td className="py-3 px-4 font-bold text-white">
-                      <span
-                        onClick={() => openPlaylistDetails(pl.id)}
-                        className="cursor-pointer hover:text-[#FF1B6B] transition-colors"
-                      >
-                        {pl.name}
-                      </span>
-                    </td>
+                  return (
+                    <tr key={pl.id} className="hover:bg-slate-900/40 transition-colors">
+                      <td className="py-3 px-4 font-mono text-slate-500">{idx + 1}</td>
 
-                    <td className="py-3 px-4 text-slate-300 font-medium">
-                      {pl.videos?.length || pl.videosCount || 0}
-                    </td>
+                      <td className="py-3 px-4">
+                        <img
+                          src={playlistCover}
+                          alt={pl.name}
+                          onError={(e) => {
+                            e.currentTarget.src = DEFAULT_DEMO_THUMBNAIL;
+                          }}
+                          onClick={() => openPlaylistDetails(pl.id)}
+                          className="w-14 h-10 rounded-lg object-cover cursor-pointer hover:opacity-80 transition-opacity bg-slate-900"
+                        />
+                      </td>
 
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        {pl.status}
-                      </span>
-                    </td>
+                      <td className="py-3 px-4 font-bold text-white">
+                        <span
+                          onClick={() => openPlaylistDetails(pl.id)}
+                          className="cursor-pointer hover:text-[#FF1B6B] transition-colors"
+                        >
+                          {pl.name}
+                        </span>
+                      </td>
+
+                      <td className="py-3 px-4 text-slate-300 font-medium">
+                        {pl.videos?.length || pl.videosCount || 0}
+                      </td>
+
+                      <td className="py-3 px-4">
+                        {isLive ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center gap-1 w-fit">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                            <span>Live</span>
+                          </span>
+                        ) : (
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            pl.status === 'Ended'
+                              ? 'bg-amber-500/10 text-amber-400 border-amber-500/25'
+                              : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                          }`}>
+                            {pl.status === 'Ended' ? 'Stopped' : 'Ready'}
+                          </span>
+                        )}
+                      </td>
 
                     <td className="py-3 px-4 text-slate-400">
                       {pl.createdAt}
@@ -150,8 +174,9 @@ export const AdminPlaylistPage: React.FC = () => {
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
+                );
+              })
+            )}
             </tbody>
           </table>
         </div>

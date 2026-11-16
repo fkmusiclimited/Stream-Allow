@@ -1,5 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
+import { uploadVideoFileWithChunking } from '../../utils/chunkedUpload';
 import {
   ArrowLeft,
   PlusCircle,
@@ -23,7 +24,8 @@ import {
   Repeat,
   Volume2,
   VolumeX,
-  Shuffle
+  Shuffle,
+  Square
 } from 'lucide-react';
 import { StreamItem } from '../../types';
 
@@ -35,6 +37,7 @@ export const PlaylistDetailsPage: React.FC = () => {
     navigate,
     addStream,
     updateStreamStatus,
+    stoppingStreamIds,
     addVideoToPlaylist,
     addVideoToPlaylistAndRestartLive,
     restartLiveBroadcast,
@@ -45,28 +48,142 @@ export const PlaylistDetailsPage: React.FC = () => {
     showToast
   } = useApp();
 
-  const playlist = playlists.find(p => p.id === selectedPlaylistId) || playlists[0];
+  const fallbackStream = streams.find(s => s.id === selectedPlaylistId || s.playlistId === selectedPlaylistId);
+  const foundPlaylist = playlists.find(p => p.id === selectedPlaylistId) ||
+    playlists.find(p => p.id === fallbackStream?.playlistId || (p.name || '').trim().toLowerCase() === fallbackStream?.title?.trim()?.toLowerCase()) ||
+    playlists[0];
+
+  const playlist = foundPlaylist || {
+    id: selectedPlaylistId || (fallbackStream ? (fallbackStream.playlistId || fallbackStream.id) : 'pl-default'),
+    name: fallbackStream?.title || 'Live Stream Playlist',
+    description: 'Broadcast stream video queue',
+    videosCount: 0,
+    totalDuration: '00:00',
+    totalRuntimeSeconds: 0,
+    status: 'Active',
+    thumbnail: fallbackStream?.thumbnail || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600',
+    isLiveLoop: true,
+    videos: []
+  };
   const videoList = playlist?.videos || [];
 
-  // Connected live stream for this specific playlist ONLY (no global fallback)
-  const connectedLiveStream = streams.find(
-    s => s.playlistId === playlist?.id && s.status === 'live'
-  ) || null;
-  const isPlaylistLive = Boolean(connectedLiveStream);
+  // Connected live stream for this specific playlist (prioritize active live stream)
+  const connectedStream = streams.find(
+    s => (s.playlistId === playlist?.id || s.id === playlist?.id || (s.title && playlist?.name && s.title.trim().toLowerCase() === playlist.name.trim().toLowerCase())) && s.status === 'live'
+  ) || streams.find(
+    s => s.playlistId === playlist?.id || s.id === playlist?.id || (s.title && playlist?.name && s.title.trim().toLowerCase() === playlist.name.trim().toLowerCase())
+  ) || fallbackStream || null;
+  const isPlaylistLive = Boolean(connectedStream && connectedStream.status === 'live');
 
   // Interactive Live Sequence Player State
   const [activeTrackIndex, setActiveTrackIndex] = useState<number>(0);
-  const [isPlaying, setIsPlaying] = useState<boolean>(true);
-  const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [autoAdvance, setAutoAdvance] = useState<boolean>(true); // Auto move enabled by default
+  const [isPlaying, setIsPlaying] = useState<boolean>(isPlaylistLive);
+  const [isMuted, setIsMuted] = useState<boolean>(true);
+  const [autoAdvance, setAutoAdvance] = useState<boolean>(() => {
+    try {
+      const savedPl = localStorage.getItem(`streamallow_automove_${playlist?.id}`);
+      if (savedPl !== null) return savedPl === 'true';
+      const savedGlobal = localStorage.getItem('streamallow_automove_global');
+      if (savedGlobal !== null) return savedGlobal === 'true';
+    } catch {}
+    return true;
+  }); // Auto move enabled by default with persistent settings
   const [playbackSeconds, setPlaybackSeconds] = useState<number>(0);
+  const [realVideoDuration, setRealVideoDuration] = useState<number>(0);
   const [autoAdvanceNotice, setAutoAdvanceNotice] = useState<string | null>(null);
+  const videoPlayerRef = useRef<HTMLVideoElement>(null);
+  const playbackRef = useRef<number>(0);
+  const lastSyncedTrackKeyRef = useRef<string>('');
+  const pendingSeekSecondsRef = useRef<number | null>(null);
+  playbackRef.current = playbackSeconds;
+
+  // Helper to parse duration string (e.g. "04:34" or "01:15:20") into total seconds
+  const parseDurationToSeconds = (durationStr?: string, fallbackSecs: number = 0): number => {
+    if (fallbackSecs && fallbackSecs > 0) return fallbackSecs;
+    if (!durationStr || typeof durationStr !== 'string') return 0;
+    const parts = durationStr.trim().split(':').map(p => parseInt(p, 10));
+    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+      return parts[0] * 60 + parts[1];
+    }
+    if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+    const num = parseFloat(durationStr);
+    return isNaN(num) ? 0 : num;
+  };
+
+  // Synchronize playback state when stream is stopped or started
+  useEffect(() => {
+    if (!isPlaylistLive) {
+      setIsPlaying(false);
+      setPlaybackSeconds(0);
+      playbackRef.current = 0;
+      lastSyncedTrackKeyRef.current = '';
+      pendingSeekSecondsRef.current = null;
+      if (videoPlayerRef.current) {
+        videoPlayerRef.current.pause();
+      }
+    } else {
+      setIsPlaying(true);
+      if (videoPlayerRef.current) {
+        videoPlayerRef.current.play().catch(() => {});
+      }
+    }
+  }, [isPlaylistLive]);
+
+  // Synchronize Dashboard sequence player with server's live track index & elapsed offset
+  useEffect(() => {
+    if (!isPlaylistLive || !connectedStream || videoList.length === 0) return;
+    if (typeof connectedStream.currentTrackIndex !== 'number') return;
+
+    const serverIdx = ((connectedStream.currentTrackIndex % videoList.length) + videoList.length) % videoList.length;
+    const syncKey = `${connectedStream.id}:${serverIdx}:${connectedStream.currentTrackStartedAt || ''}`;
+    if (syncKey === lastSyncedTrackKeyRef.current) return;
+    lastSyncedTrackKeyRef.current = syncKey;
+
+    const startedMs = connectedStream.currentTrackStartedAt ? Date.parse(connectedStream.currentTrackStartedAt) : NaN;
+    const elapsedSec = !isNaN(startedMs) ? Math.max(0, (Date.now() - startedMs) / 1000) : 0;
+
+    if (serverIdx !== activeTrackIndex) {
+      setActiveTrackIndex(serverIdx);
+      setRealVideoDuration(0);
+      pendingSeekSecondsRef.current = elapsedSec > 1.5 ? elapsedSec : null;
+      setPlaybackSeconds(elapsedSec > 1.5 ? elapsedSec : 0);
+      playbackRef.current = elapsedSec > 1.5 ? elapsedSec : 0;
+    } else if (elapsedSec > 1.5 && Math.abs(playbackRef.current - elapsedSec) > 3.5) {
+      const vid = videoPlayerRef.current;
+      if (vid && vid.duration && !isNaN(vid.duration) && elapsedSec < vid.duration - 1) {
+        vid.currentTime = elapsedSec;
+        setPlaybackSeconds(elapsedSec);
+        playbackRef.current = elapsedSec;
+      } else {
+        pendingSeekSecondsRef.current = elapsedSec;
+      }
+    }
+  }, [
+    isPlaylistLive,
+    connectedStream?.id,
+    connectedStream?.currentTrackIndex,
+    connectedStream?.currentTrackStartedAt,
+    videoList.length,
+    activeTrackIndex
+  ]);
+
+  // Ensure HTML5 <video> element starts playing whenever the active track changes while live/playing
+  const activeTrackUrl = videoList[activeTrackIndex]?.url || videoList[0]?.url;
+  useEffect(() => {
+    const vid = videoPlayerRef.current;
+    if (!vid || !activeTrackUrl) return;
+    if (isPlaying || isPlaylistLive) {
+      vid.play().catch(() => {});
+    }
+  }, [isPlaylistLive, isPlaying, activeTrackIndex, activeTrackUrl]);
 
   // Upload Video File & Extraction State
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [videoTitle, setVideoTitle] = useState('');
   const [videoDuration, setVideoDuration] = useState('');
-  const [videoUrl, setVideoUrl] = useState('https://cdn.streamjoin.com/media/uploaded-loop.mp4');
+  const [videoUrl, setVideoUrl] = useState('https://cdn.streamallow.com/media/uploaded-loop.mp4');
   const [videoThumbnail, setVideoThumbnail] = useState<string>('');
   const [isExtractingFrame, setIsExtractingFrame] = useState(false);
   const [frameExtracted, setFrameExtracted] = useState(false);
@@ -82,41 +199,49 @@ export const PlaylistDetailsPage: React.FC = () => {
 
   const currentPlayingVideo = videoList[activeTrackIndex] || videoList[0];
 
-  // Automated Sequence Progression & Continuous Loop
-  useEffect(() => {
-    if (!isPlaying || videoList.length === 0) return;
+  // Determine the exact duration in seconds for the currently active track
+  const currentVideoDurationSeconds = useMemo(() => {
+    if (realVideoDuration > 0) return realVideoDuration;
+    const fromMetadata = parseDurationToSeconds(currentPlayingVideo?.duration, (currentPlayingVideo as any)?.durationSeconds);
+    return fromMetadata > 0 ? fromMetadata : 274;
+  }, [realVideoDuration, currentPlayingVideo]);
 
-    const interval = setInterval(() => {
-      setPlaybackSeconds(prev => {
-        // Parse track duration in seconds or default to 15s simulated transition cycle for preview
-        if (prev >= 15) {
-          if (autoAdvance) {
-            // Auto advance to next video!
-            const nextIndex = (activeTrackIndex + 1) % videoList.length;
-            const nextVideo = videoList[nextIndex];
-            setActiveTrackIndex(nextIndex);
-            setAutoAdvanceNotice(
-              `Auto-moved: "${currentPlayingVideo?.title || 'Video'}" finished -> Now playing: "${nextVideo?.title || 'Next'}"`
-            );
-            setTimeout(() => setAutoAdvanceNotice(null), 4000);
-          }
-          return 0;
-        }
-        return prev + 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [isPlaying, autoAdvance, activeTrackIndex, videoList, currentPlayingVideo]);
-
-  // Handle manual next track
-  const handleNextTrack = () => {
+  // Handle track advance (manual skips sync server live broadcast; natural video end loops in-place without dropping RTMP)
+  const handleNextTrack = useCallback((isManual: boolean = true) => {
     if (videoList.length === 0) return;
     const nextIndex = (activeTrackIndex + 1) % videoList.length;
-    setActiveTrackIndex(nextIndex);
+    pendingSeekSecondsRef.current = null;
     setPlaybackSeconds(0);
-    showToast(`Playing next: "${videoList[nextIndex]?.title}"`, 'info');
-  };
+    playbackRef.current = 0;
+
+    if (nextIndex === activeTrackIndex) {
+      // Single-video playlist: restart current track cleanly from beginning
+      if (videoPlayerRef.current) {
+        videoPlayerRef.current.currentTime = 0;
+        if (isPlaying || isPlaylistLive) {
+          videoPlayerRef.current.play().catch(() => {});
+        }
+      }
+    } else {
+      setActiveTrackIndex(nextIndex);
+      setRealVideoDuration(0);
+      if (videoPlayerRef.current) {
+        videoPlayerRef.current.currentTime = 0;
+      }
+    }
+
+    if (isManual) {
+      showToast(`Playing next: "${videoList[nextIndex]?.title}"`, 'info');
+      if (isPlaylistLive) {
+        restartLiveBroadcast(playlist.id, nextIndex);
+      }
+    } else {
+      setAutoAdvanceNotice(
+        `Auto-moved: "${currentPlayingVideo?.title || 'Video'}" finished -> Now playing: "${videoList[nextIndex]?.title || 'Next'}"`
+      );
+      setTimeout(() => setAutoAdvanceNotice(null), 4000);
+    }
+  }, [activeTrackIndex, videoList, isPlaying, isPlaylistLive, playlist.id, restartLiveBroadcast, showToast, currentPlayingVideo]);
 
   // Handle manual previous track
   const handlePrevTrack = () => {
@@ -124,8 +249,49 @@ export const PlaylistDetailsPage: React.FC = () => {
     const prevIndex = (activeTrackIndex - 1 + videoList.length) % videoList.length;
     setActiveTrackIndex(prevIndex);
     setPlaybackSeconds(0);
+    playbackRef.current = 0;
+    setRealVideoDuration(0);
+    if (videoPlayerRef.current) {
+      videoPlayerRef.current.currentTime = 0;
+    }
     showToast(`Playing: "${videoList[prevIndex]?.title}"`, 'info');
+    if (isPlaylistLive) {
+      restartLiveBroadcast(playlist.id, prevIndex);
+    }
   };
+
+  // Automated Sequence Progression & Continuous Loop (Syncs with exact video duration)
+  useEffect(() => {
+    if (!isPlaying || videoList.length === 0) return;
+
+    const interval = setInterval(() => {
+      // If the HTML5 video element is playing and reporting currentTime, it drives the progress accurately
+      if (videoPlayerRef.current && !videoPlayerRef.current.paused && !videoPlayerRef.current.ended) {
+        const cur = videoPlayerRef.current.currentTime;
+        if (!isNaN(cur) && cur >= 0) {
+          setPlaybackSeconds(cur);
+          playbackRef.current = cur;
+        }
+        return;
+      }
+
+      // Smooth fallback ticker matching the exact duration of the current video
+      const targetDuration = currentVideoDurationSeconds;
+      const next = playbackRef.current + 1;
+      if (next >= targetDuration) {
+        setPlaybackSeconds(0);
+        playbackRef.current = 0;
+        if (autoAdvance) {
+          handleNextTrack(false);
+        }
+      } else {
+        setPlaybackSeconds(next);
+        playbackRef.current = next;
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isPlaying, isPlaylistLive, autoAdvance, currentVideoDurationSeconds, handleNextTrack, videoList.length]);
 
   // Helper to format video duration in mm:ss or hh:mm:ss format
   const formatVideoDuration = (seconds: number): string => {
@@ -176,12 +342,15 @@ export const PlaylistDetailsPage: React.FC = () => {
         video.onseeked = () => {
           try {
             const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth || 640;
-            canvas.height = video.videoHeight || 360;
+            const vw = video.videoWidth || 640;
+            const vh = video.videoHeight || 360;
+            const scale = Math.min(640 / vw, 360 / vh, 1);
+            canvas.width = Math.round(vw * scale);
+            canvas.height = Math.round(vh * scale);
             const ctx = canvas.getContext('2d');
             if (ctx) {
               ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
               URL.revokeObjectURL(fileUrl);
               resolve({
                 thumbnail: dataUrl,
@@ -270,20 +439,23 @@ export const PlaylistDetailsPage: React.FC = () => {
     if (file) {
       setUploadError(null);
 
-      // Validate video format (MP4, MOV, MKV, WebM)
-      const validExtensions = ['.mp4', '.mov', '.mkv', '.webm'];
+      // Validate video format (MP4, QuickTime / MOV, MKV, WebM, H.264, iPhone videos)
+      const validExtensions = ['.mp4', '.mov', '.mkv', '.webm', '.m4v', '.qt', '.quicktime', '.avi', '.flv', '.ts', '.3gp', '.hevc', '.m2ts', '.wmv'];
       const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
-      if (!validExtensions.includes(ext) && !file.type.startsWith('video/')) {
-        const errorMsg = 'Invalid video format. Supported formats: MP4, MOV, MKV, WebM';
+      const isVideoMime = !file.type || file.type.startsWith('video/') || file.type.includes('quicktime') || file.type === 'application/octet-stream';
+      const isValidExt = validExtensions.includes(ext);
+
+      if (!isValidExt && !isVideoMime) {
+        const errorMsg = 'Invalid video format. Supported formats: MP4, QuickTime (MOV), WebM, MKV, iPhone Video (H.264)';
         setUploadError(errorMsg);
         showToast(errorMsg, 'error');
         return;
       }
 
-      // Validate maximum 2 GB upload size limit
-      const maxSizeBytes = 2 * 1024 * 1024 * 1024;
+      // Support big files up to 10 GB
+      const maxSizeBytes = 10 * 1024 * 1024 * 1024;
       if (file.size > maxSizeBytes) {
-        const errorMsg = 'File is too large. Maximum allowed size is 2 GB.';
+        const errorMsg = 'File is too large. Maximum allowed size is 10 GB.';
         setUploadError(errorMsg);
         showToast(errorMsg, 'error');
         return;
@@ -336,122 +508,140 @@ export const PlaylistDetailsPage: React.FC = () => {
     setUploadProgress(0);
     setUploadError(null);
 
-    const formData = new FormData();
-    formData.append('video', selectedFile);
+    // Helper to finish adding video to playlist
+    const finalizePlaylistVideo = (videoData: {
+      duration: string;
+      durationSeconds: number;
+      resolution: string;
+      format: string;
+      filePath?: string;
+      fileSizeBytes: number;
+      url: string;
+      thumbnail: string;
+      mediaId?: string;
+    }) => {
+      addVideoToPlaylist(playlist.id, {
+        title: videoTitle,
+        ...videoData
+      });
 
-    const token = localStorage.getItem('streamjoin_token');
-    const xhr = new XMLHttpRequest();
+      showToast(`✓ "${videoTitle}" added to playlist queue successfully!`, 'success');
 
-    xhr.open('POST', '/api/media/upload');
-    if (token) {
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-    }
-
-    // Real upload progress tracked from actual network bytes transferred
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) {
-        const percent = Math.min(99, Math.round((event.loaded / event.total) * 100));
-        setUploadProgress(percent);
-      }
-    };
-
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const res = JSON.parse(xhr.responseText);
-          const uploadedFile = res.file;
-          setUploadProgress(100);
-
-          const finalThumbnail = uploadedFile.thumbnailUrl || videoThumbnail || generateDynamicVideoFrame(videoTitle);
-          const finalDuration = uploadedFile.formattedDuration || videoDuration || '00:00';
-
-          // Add to playlist queue with real server storage path & FFprobe metadata
-          addVideoToPlaylist(playlist.id, {
-            title: videoTitle,
-            duration: finalDuration,
-            durationSeconds: uploadedFile.durationSeconds,
-            resolution: uploadedFile.resolution,
-            format: uploadedFile.format,
-            filePath: uploadedFile.filePath,
-            fileSizeBytes: uploadedFile.fileSizeBytes,
-            url: uploadedFile.url,
-            thumbnail: finalThumbnail
-          });
-
-          showToast(`"${videoTitle}" uploaded & analyzed with FFprobe successfully!`, 'success');
-
-          // Reset modal state
-          setIsUploading(false);
-          setUploadModalOpen(false);
-          setUploadProgress(0);
-          setSelectedFile(null);
-          setVideoTitle('');
-          setSelectedFileName('');
-          setSelectedFileSize('');
-          setVideoThumbnail('');
-          setVideoDuration('');
-          setFrameExtracted(false);
-          setUploadError(null);
-        } catch (err: any) {
-          setIsUploading(false);
-          const parseErr = 'Failed to process server upload response.';
-          setUploadError(parseErr);
-          showToast(parseErr, 'error');
-        }
-      } else {
-        setIsUploading(false);
-        let errorMsg = 'Video upload failed.';
-        try {
-          const errRes = JSON.parse(xhr.responseText);
-          if (errRes.message) errorMsg = errRes.message;
-        } catch {}
-        setUploadError(errorMsg);
-        showToast(errorMsg, 'error');
-      }
-    };
-
-    xhr.onerror = () => {
+      // Reset modal state
       setIsUploading(false);
-      const networkErr = 'Network error occurred during video upload. Please check connection.';
-      setUploadError(networkErr);
-      showToast(networkErr, 'error');
+      setUploadModalOpen(false);
+      setUploadProgress(0);
+      setSelectedFile(null);
+      setVideoTitle('');
+      setSelectedFileName('');
+      setSelectedFileSize('');
+      setVideoThumbnail('');
+      setVideoDuration('');
+      setFrameExtracted(false);
+      setUploadError(null);
     };
 
-    xhr.send(formData);
+    uploadVideoFileWithChunking(selectedFile, (percent) => setUploadProgress(percent))
+      .then((uploadedFile) => {
+        setUploadProgress(100);
+        const finalThumbnail = uploadedFile?.thumbnailUrl || videoThumbnail || generateDynamicVideoFrame(videoTitle);
+        const finalDuration = uploadedFile?.formattedDuration || videoDuration || '05:00';
+        const durSecs = uploadedFile?.durationSeconds || 300;
+
+        finalizePlaylistVideo({
+          duration: finalDuration,
+          durationSeconds: durSecs,
+          resolution: uploadedFile?.resolution || '1080p FHD',
+          format: uploadedFile?.format || 'MP4',
+          filePath: uploadedFile?.filePath,
+          fileSizeBytes: uploadedFile?.fileSizeBytes || selectedFile.size,
+          url: uploadedFile?.url || uploadedFile?.fileUrl || `/media/${selectedFile.name}`,
+          thumbnail: finalThumbnail,
+          mediaId: uploadedFile?.id
+        });
+      })
+      .catch((err: any) => {
+        const msg = err?.message || 'Failed to upload video file to server.';
+        setIsUploading(false);
+        setUploadProgress(0);
+        setUploadError(msg);
+        showToast(msg, 'error');
+      });
   };
 
   // Handle restarting live broadcast: restarts stream on YouTube and local player from beginning WITHOUT adding any videos
   const handleRestartLiveBroadcast = () => {
     setActiveTrackIndex(0);
     setPlaybackSeconds(0);
+    setRealVideoDuration(0);
+    if (videoPlayerRef.current) {
+      videoPlayerRef.current.currentTime = 0;
+    }
     setIsPlaying(true);
     restartLiveBroadcast(playlist.id, 0);
   };
 
-  // Handle starting live stream for this playlist if offline
-  const handleStartLiveStream = () => {
-    const existing = streams.find(s => s.playlistId === playlist.id);
-    if (existing) {
-      updateStreamStatus(existing.id, 'live');
-      showToast(`⚡ Live stream started for "${playlist.name}"!`, 'success');
+  // Handle starting live stream on YouTube
+  const handleStartLiveStream = async () => {
+    if (connectedStream) {
+      await updateStreamStatus(connectedStream.id, 'live');
+      setIsPlaying(true);
+      showToast(`⚡ Stream "${connectedStream.title}" is now LIVE on YouTube!`, 'success');
     } else {
-      addStream({
-        title: `${playlist.name} Live Stream`,
-        description: `Continuous 24/7 live broadcast for ${playlist.name}`,
-        channelName: 'Music World',
-        channelId: 'ch-2',
-        thumbnail: playlist.thumbnail,
-        status: 'live',
-        date: 'Today',
-        time: 'Now',
+      const newStream = {
+        title: playlist.name || '24/7 Live Stream',
+        channelName: 'YouTube Live',
+        channelId: 'ch_default',
+        status: 'live' as const,
+        thumbnail: playlist.thumbnail || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600',
+        date: new Date().toISOString().split('T')[0],
+        time: '24/7 Continuous',
+        loop: true,
         playlistId: playlist.id,
-        streamKey: `live_${Date.now()}_rtmp`,
-        rtmpUrl: 'rtmp://a.rtmp.youtube.com/live2',
-        resolution: '1080p60',
-        bitrate: '4500 kbps',
-        loop: true
-      });
-      showToast(`⚡ Live stream launched for "${playlist.name}"!`, 'success');
+        streamKey: 'live_stream_key_default'
+      };
+      await addStream(newStream);
+      setIsPlaying(true);
+    }
+  };
+
+  const liveStreamsToStop = streams.filter(
+    s => (s.playlistId === playlist.id || s.id === playlist.id || (s.title && playlist.name && s.title.trim().toLowerCase() === playlist.name.trim().toLowerCase())) && s.status === 'live'
+  );
+  const isStoppingLive =
+    liveStreamsToStop.some(st => stoppingStreamIds.includes(st.id)) ||
+    (connectedStream ? stoppingStreamIds.includes(connectedStream.id) : false);
+
+  // Handle stopping live stream broadcast completely on YouTube and server
+  const handleStopLiveStream = async () => {
+    if (isStoppingLive) return;
+    const targets = liveStreamsToStop.length > 0
+      ? liveStreamsToStop
+      : (connectedStream ? [connectedStream] : []);
+
+    if (targets.length === 0) return;
+
+    let allConfirmed = true;
+    for (const st of targets) {
+      const ok = await updateStreamStatus(st.id, 'ended');
+      if (!ok) allConfirmed = false;
+    }
+
+    if (allConfirmed) {
+      setIsPlaying(false);
+      setPlaybackSeconds(0);
+      if (videoPlayerRef.current) {
+        videoPlayerRef.current.pause();
+      }
+    }
+  };
+
+  // Handle toggling live stream (Stop and Start live video broadcast on YouTube)
+  const handleToggleLiveStream = async () => {
+    if (isPlaylistLive) {
+      await handleStopLiveStream();
+    } else {
+      await handleStartLiveStream();
     }
   };
 
@@ -483,13 +673,24 @@ export const PlaylistDetailsPage: React.FC = () => {
 
         <div className="flex items-center gap-3">
           {isPlaylistLive ? (
-            <button
-              onClick={handleRestartLiveBroadcast}
-              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
-              <span>Restart Live Broadcast</span>
-            </button>
+            <>
+              <button
+                onClick={handleStopLiveStream}
+                disabled={isStoppingLive}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 transition-all shadow-md shadow-rose-900/40 cursor-pointer"
+                title="Stop Live Stream Broadcast"
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+                <span>{isStoppingLive ? 'Stopping...' : 'Stop Live'}</span>
+              </button>
+              <button
+                onClick={handleRestartLiveBroadcast}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+                <span>Restart Live Broadcast</span>
+              </button>
+            </>
           ) : (
             <button
               onClick={handleStartLiveStream}
@@ -561,11 +762,58 @@ export const PlaylistDetailsPage: React.FC = () => {
             {/* Screen Preview & Active Video Info */}
             <div className="flex items-center gap-4 w-full lg:w-auto">
               <div className="relative w-36 h-22 sm:w-44 sm:h-26 rounded-2xl overflow-hidden border border-slate-700 bg-black shrink-0 shadow-lg group">
-                <img
-                  src={isPlaylistLive ? currentPlayingVideo.thumbnail : playlist.thumbnail}
-                  alt={currentPlayingVideo.title}
-                  className="w-full h-full object-cover"
-                />
+                {currentPlayingVideo?.url ? (
+                  <video
+                    key={currentPlayingVideo.id ? `${currentPlayingVideo.id}-${activeTrackIndex}` : `track-${activeTrackIndex}`}
+                    ref={videoPlayerRef}
+                    src={currentPlayingVideo.url}
+                    poster={currentPlayingVideo.thumbnail || playlist.thumbnail}
+                    className="w-full h-full object-cover"
+                    autoPlay={isPlaylistLive || isPlaying}
+                    onLoadedMetadata={(e) => {
+                      const d = e.currentTarget.duration;
+                      if (d && !isNaN(d) && d > 0) {
+                        setRealVideoDuration(d);
+                        if (pendingSeekSecondsRef.current !== null && pendingSeekSecondsRef.current < d - 1) {
+                          e.currentTarget.currentTime = pendingSeekSecondsRef.current;
+                          setPlaybackSeconds(pendingSeekSecondsRef.current);
+                          playbackRef.current = pendingSeekSecondsRef.current;
+                          pendingSeekSecondsRef.current = null;
+                        } else {
+                          pendingSeekSecondsRef.current = null;
+                        }
+                      }
+                      if (isPlaylistLive || isPlaying) {
+                        e.currentTarget.play().catch(() => {});
+                      }
+                    }}
+                    onTimeUpdate={(e) => {
+                      const cur = e.currentTarget.currentTime;
+                      if (!isNaN(cur) && cur >= 0) {
+                        setPlaybackSeconds(cur);
+                        playbackRef.current = cur;
+                      }
+                    }}
+                    onEnded={() => {
+                      if (autoAdvance) {
+                        handleNextTrack(false);
+                      } else {
+                        setIsPlaying(false);
+                      }
+                    }}
+                    muted={isMuted}
+                    playsInline
+                  />
+                ) : (
+                  <img
+                    src={currentPlayingVideo?.thumbnail || playlist.thumbnail || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600'}
+                    alt={currentPlayingVideo?.title || playlist.name}
+                    onError={(e) => {
+                      e.currentTarget.src = playlist.thumbnail || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600';
+                    }}
+                    className="w-full h-full object-cover"
+                  />
+                )}
 
                 {/* ONLY show live stream overlay if this playlist is actually broadcasting live */}
                 {isPlaylistLive ? (
@@ -587,8 +835,9 @@ export const PlaylistDetailsPage: React.FC = () => {
                     </div>
                   </>
                 ) : (
-                  <div className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-xs text-[10px] font-bold text-slate-300 flex items-center gap-1">
-                    <span>Track #{activeTrackIndex + 1}</span>
+                  <div className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-black/85 backdrop-blur-xs text-[10px] font-bold text-amber-400 border border-amber-500/30 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                    <span>Stream Stopped</span>
                   </div>
                 )}
               </div>
@@ -601,9 +850,9 @@ export const PlaylistDetailsPage: React.FC = () => {
                       Now Broadcasting
                     </span>
                   ) : (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-800 text-slate-300 flex items-center gap-1.5 border border-slate-700">
-                      <Film className="w-3 h-3 text-slate-400" />
-                      Playlist Sequence Preview
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-500/10 text-amber-400 flex items-center gap-1.5 border border-amber-500/30">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                      Stream Stopped
                     </span>
                   )}
                   <span className="text-[11px] font-mono text-slate-400">
@@ -636,30 +885,34 @@ export const PlaylistDetailsPage: React.FC = () => {
                 </button>
 
                 {isPlaylistLive ? (
-                  /* 24/7 Unstoppable Live Indicator (Play/Pause removed so live stream cannot be stopped) */
-                  <div className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-rose-950/90 via-slate-900 to-rose-950/60 border border-rose-500/40 text-rose-400 text-xs font-bold flex items-center gap-2 select-none">
-                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                    <span className="tracking-wide font-extrabold uppercase text-[11px]">24/7 Live</span>
-                    <div className="flex items-end gap-0.5 h-3 ml-0.5">
-                      <span className="w-0.5 bg-rose-400 rounded-full animate-[bounce_0.8s_infinite] h-3" />
-                      <span className="w-0.5 bg-rose-400 rounded-full animate-[bounce_0.6s_infinite] h-2" />
-                      <span className="w-0.5 bg-rose-400 rounded-full animate-[bounce_1.0s_infinite] h-2.5" />
-                    </div>
-                  </div>
-                ) : (
+                  /* Interactive 24/7 Live Stream Stop Button */
                   <button
                     type="button"
-                    onClick={() => setIsPlaying(!isPlaying)}
-                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    disabled={isStoppingLive}
+                    onClick={handleStopLiveStream}
+                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-950 via-rose-900 to-rose-950 border border-rose-500/60 hover:border-rose-400 hover:from-rose-900 hover:to-rose-800 disabled:opacity-60 disabled:cursor-not-allowed text-rose-200 text-xs font-bold flex items-center gap-2 cursor-pointer transition-all shadow-lg shadow-rose-950/50 group"
+                    title="Click to STOP live stream broadcast on YouTube"
                   >
-                    {isPlaying ? <Pause className="w-3.5 h-3.5 fill-current text-rose-400" /> : <Play className="w-3.5 h-3.5 fill-current text-emerald-400 ml-0.5" />}
-                    <span>{isPlaying ? 'Pause' : 'Preview'}</span>
+                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                    <span className="tracking-wide font-extrabold uppercase text-[11px] text-white">{isStoppingLive ? 'Stopping...' : 'Stop Live'}</span>
+                    <Square className="w-3 h-3 fill-current text-rose-300 group-hover:scale-110 transition-transform ml-0.5" />
+                  </button>
+                ) : (
+                  /* Interactive Start Live / Preview Button */
+                  <button
+                    type="button"
+                    onClick={handleStartLiveStream}
+                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-950 via-emerald-900 to-teal-950 border border-emerald-500/60 hover:border-emerald-400 hover:from-emerald-900 hover:to-teal-900 text-emerald-200 text-xs font-bold flex items-center gap-2 cursor-pointer transition-all shadow-lg shadow-emerald-950/50 group"
+                    title="Click to START live stream broadcast on YouTube"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current text-emerald-400 group-hover:scale-110 transition-transform ml-0.5" />
+                    <span className="tracking-wide font-extrabold uppercase text-[11px] text-white">Start Live</span>
                   </button>
                 )}
 
                 <button
                   type="button"
-                  onClick={handleNextTrack}
+                  onClick={() => handleNextTrack(true)}
                   className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
                   title="Next Video"
                 >
@@ -684,10 +937,14 @@ export const PlaylistDetailsPage: React.FC = () => {
                   onClick={() => {
                     const newState = !autoAdvance;
                     setAutoAdvance(newState);
+                    try {
+                      localStorage.setItem(`streamallow_automove_${playlist?.id}`, String(newState));
+                      localStorage.setItem('streamallow_automove_global', String(newState));
+                    } catch {}
                     showToast(
                       newState
-                        ? 'Auto-move ON: Videos will play continuously in sequence.'
-                        : 'Auto-move OFF: Video will stop after finishing.',
+                        ? 'Auto-move ON: Videos will play continuously in sequence (Setting saved).'
+                        : 'Auto-move OFF: Video will stop after finishing (Setting saved).',
                       'info'
                     );
                   }}
@@ -709,12 +966,21 @@ export const PlaylistDetailsPage: React.FC = () => {
           <div className="space-y-1.5 pt-1">
             <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
               <div
-                className="bg-gradient-to-r from-[#FF1B6B] to-emerald-400 h-full rounded-full transition-all duration-1000 ease-linear"
-                style={{ width: `${Math.min(100, (playbackSeconds / 15) * 100)}%` }}
+                className="bg-gradient-to-r from-[#FF1B6B] to-emerald-400 h-full rounded-full transition-all duration-300 ease-linear"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    currentVideoDurationSeconds > 0
+                      ? (playbackSeconds / currentVideoDurationSeconds) * 100
+                      : 0
+                  )}%`
+                }}
               />
             </div>
             <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
-              <span>00:{playbackSeconds < 10 ? `0${playbackSeconds}` : playbackSeconds}</span>
+              <span className="font-semibold text-white">
+                {formatVideoDuration(playbackSeconds)}
+              </span>
               <span className="text-emerald-400 font-semibold">
                 {autoAdvance
                   ? isPlaylistLive
@@ -722,7 +988,9 @@ export const PlaylistDetailsPage: React.FC = () => {
                     : 'Continuous Loop (Preview Queue)'
                   : 'Single Play'}
               </span>
-              <span>{currentPlayingVideo.duration}</span>
+              <span className="text-slate-300 font-medium">
+                {formatVideoDuration(currentVideoDurationSeconds)}
+              </span>
             </div>
           </div>
         </div>
@@ -732,15 +1000,29 @@ export const PlaylistDetailsPage: React.FC = () => {
       <div className="p-6 sm:p-8 rounded-3xl bg-[#0F1626] border border-slate-800 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
           <div className="relative group shrink-0">
-            <img
-              src={isPlaylistLive ? (currentPlayingVideo?.thumbnail || playlist.thumbnail) : playlist.thumbnail}
-              alt={playlist.name}
-              className={`w-24 h-24 sm:w-28 sm:h-28 rounded-2xl object-cover shadow-xl transition-all duration-300 ${
-                isPlaylistLive
-                  ? 'border-2 border-rose-500/60 shadow-rose-950/40'
-                  : 'border border-slate-700 shadow-slate-950/40'
-              }`}
-            />
+            {(() => {
+              const DEFAULT_DEMO_THUMBNAIL = 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80';
+              const hasVideos = videoList.length > 0;
+              const firstVideoCover = videoList[0]?.thumbnail || (videoList[0] as any)?.thumbnailUrl;
+              const playlistCover = hasVideos
+                ? (currentPlayingVideo?.thumbnail || firstVideoCover || playlist.thumbnail || DEFAULT_DEMO_THUMBNAIL)
+                : DEFAULT_DEMO_THUMBNAIL;
+
+              return (
+                <img
+                  src={playlistCover}
+                  alt={playlist.name}
+                  onError={(e) => {
+                    e.currentTarget.src = DEFAULT_DEMO_THUMBNAIL;
+                  }}
+                  className={`w-24 h-24 sm:w-28 sm:h-28 rounded-2xl object-cover shadow-xl transition-all duration-300 ${
+                    isPlaylistLive
+                      ? 'border-2 border-rose-500/60 shadow-rose-950/40'
+                      : 'border border-slate-700 shadow-slate-950/40'
+                  }`}
+                />
+              );
+            })()}
             {/* ONLY show LIVE SYNC on hero thumbnail if live */}
             {isPlaylistLive && (
               <div className="absolute bottom-1.5 left-1.5 right-1.5 bg-black/85 backdrop-blur-xs rounded-md px-1.5 py-0.5 text-[9px] font-black text-rose-400 border border-rose-500/40 flex items-center justify-center gap-1 shadow">
@@ -799,7 +1081,7 @@ export const PlaylistDetailsPage: React.FC = () => {
         </div>
 
         {/* Live Broadcast Target Pill or Stream Offline Action Box */}
-        {isPlaylistLive && connectedLiveStream ? (
+        {isPlaylistLive && connectedStream ? (
           <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 shrink-0 w-full md:w-72 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold uppercase tracking-wider text-rose-500 flex items-center gap-1.5">
@@ -807,12 +1089,12 @@ export const PlaylistDetailsPage: React.FC = () => {
                 Live on YouTube
               </span>
               <span className="text-xs font-semibold text-slate-300">
-                {connectedLiveStream.viewers.toLocaleString()} watching
+                {(connectedStream.viewers || 0).toLocaleString()} watching
               </span>
             </div>
-            <p className="text-xs font-bold text-white truncate">{connectedLiveStream.title}</p>
+            <p className="text-xs font-bold text-white truncate">{connectedStream.title}</p>
             <button
-              onClick={() => setActiveViewingStream(connectedLiveStream)}
+              onClick={() => setActiveViewingStream(connectedStream)}
               className="w-full py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
             >
               <Eye className="w-3.5 h-3.5 text-rose-400" />
@@ -910,13 +1192,28 @@ export const PlaylistDetailsPage: React.FC = () => {
                       onClick={() => {
                         setActiveTrackIndex(idx);
                         setPlaybackSeconds(0);
-                        setIsPlaying(true);
+                        setRealVideoDuration(0);
+                        if (videoPlayerRef.current) {
+                          videoPlayerRef.current.currentTime = 0;
+                        }
+                        if (isPlaylistLive) {
+                          setIsPlaying(true);
+                          restartLiveBroadcast(playlist.id, idx);
+                        }
                       }}
                       className="relative w-28 h-18 sm:w-36 sm:h-20 rounded-xl overflow-hidden border border-slate-700 bg-slate-950 shrink-0 cursor-pointer group/thumb shadow-md"
                     >
                       <img
-                        src={video.thumbnail}
+                        src={video.thumbnail || playlist.thumbnail || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600'}
                         alt={video.title}
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          if (playlist.thumbnail && target.src !== playlist.thumbnail) {
+                            target.src = playlist.thumbnail;
+                          } else {
+                            target.src = 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600';
+                          }
+                        }}
                         className="w-full h-full object-cover group-hover/thumb:scale-105 transition-transform duration-300"
                       />
                       <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity">
@@ -939,9 +1236,9 @@ export const PlaylistDetailsPage: React.FC = () => {
                               Live Now in Sequence
                             </span>
                           ) : (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-800 text-slate-300 flex items-center gap-1 border border-slate-700">
-                              <Play className="w-3 h-3 text-slate-400 fill-current" />
-                              Active in Preview
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 flex items-center gap-1 border border-amber-500/30">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                              Stream Stopped
                             </span>
                           )
                         )}
@@ -963,8 +1260,15 @@ export const PlaylistDetailsPage: React.FC = () => {
                       onClick={() => {
                         setActiveTrackIndex(idx);
                         setPlaybackSeconds(0);
+                        setRealVideoDuration(0);
+                        if (videoPlayerRef.current) {
+                          videoPlayerRef.current.currentTime = 0;
+                        }
                         setIsPlaying(true);
                         showToast(`Selected video #${idx + 1}: "${video.title}"`, 'info');
+                        if (isPlaylistLive) {
+                          restartLiveBroadcast(playlist.id, idx);
+                        }
                       }}
                       className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
                         isCurrentlyPlaying
@@ -1030,7 +1334,7 @@ export const PlaylistDetailsPage: React.FC = () => {
                 <input
                   ref={videoFileInputRef}
                   type="file"
-                  accept="video/mp4,video/webm,video/quicktime,video/x-matroska,video/*"
+                  accept="video/*,video/mp4,video/quicktime,video/webm,video/x-matroska,video/x-m4v,.mp4,.mov,.MOV,.mkv,.webm,.m4v,.quicktime,.qt,.ts,.avi,.flv,.3gp"
                   onChange={handleFileChange}
                   className="hidden"
                 />
@@ -1048,10 +1352,10 @@ export const PlaylistDetailsPage: React.FC = () => {
                   </div>
                   <div>
                     <p className="text-xs font-bold text-white">
-                      {selectedFileName ? selectedFileName : 'Click to Browse Video File from Computer'}
+                      {selectedFileName ? selectedFileName : 'Click to Browse Video File from Computer or Phone'}
                     </p>
                     <p className="text-[11px] text-slate-400 mt-0.5">
-                      {selectedFileSize ? `File Size: ${selectedFileSize}` : 'MP4, MOV, WebM up to 4K resolution supported'}
+                      {selectedFileSize ? `File Size: ${selectedFileSize}` : 'MP4, QuickTime (MOV), iPhone Video (H.264), MKV, WebM · Up to 10 GB supported'}
                     </p>
                   </div>
                   {isExtractingFrame && (

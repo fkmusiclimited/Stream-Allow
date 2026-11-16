@@ -137,7 +137,7 @@ export const ApiAccessPage: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
           <div className="relative w-full max-w-2xl bg-[#0F1626] border border-slate-800 rounded-2xl p-6 space-y-4 max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-bold text-white text-base">Stream Join Cloud API v1</h3>
+              <h3 className="font-bold text-white text-base">Stream Allow Cloud API v1</h3>
               <button onClick={() => setDocModalOpen(false)} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
               </button>

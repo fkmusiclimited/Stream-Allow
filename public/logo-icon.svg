@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="streamAllowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF1B6B"/>
+      <stop offset="100%" stop-color="#E11D48"/>
+    </linearGradient>
+  </defs>
+  <!-- Squircle rounded background -->
+  <rect x="24" y="24" width="464" height="464" rx="116" ry="116" fill="url(#streamAllowGrad)"/>
+  <!-- Broadcast radio waves and signal dot -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="32" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Outer wave left -->
+    <path d="M 144 368 C 82 306 82 206 144 144" />
+    <!-- Inner wave left -->
+    <path d="M 190 322 C 153 285 153 227 190 190" />
+    <!-- Central live transmitter dot -->
+    <circle cx="256" cy="256" r="28" fill="#FFFFFF" stroke="none" />
+    <!-- Inner wave right -->
+    <path d="M 322 190 C 359 227 359 285 322 322" />
+    <!-- Outer wave right -->
+    <path d="M 368 144 C 430 206 430 306 368 368" />
+  </g>
+</svg>

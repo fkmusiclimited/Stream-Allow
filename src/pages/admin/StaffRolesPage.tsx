@@ -193,7 +193,7 @@ export const StaffRolesPage: React.FC = () => {
                   required
                   value={email}
                   onChange={e => setEmail(e.target.value)}
-                  placeholder="tariqul@streamjoin.com"
+                  placeholder="tariqul@streamallow.com"
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
                 />
               </div>

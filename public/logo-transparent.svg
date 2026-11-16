@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="160" viewBox="0 0 640 160">
+  <defs>
+    <linearGradient id="streamAllowGradH" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF1B6B"/>
+      <stop offset="100%" stop-color="#E11D48"/>
+    </linearGradient>
+    <linearGradient id="textPinkGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FF1B6B"/>
+      <stop offset="100%" stop-color="#FF5E8E"/>
+    </linearGradient>
+  </defs>
+  <!-- Dark backdrop container -->
+  
+  <!-- Icon squircle -->
+  <rect x="25" y="25" width="110" height="110" rx="28" ry="28" fill="url(#streamAllowGradH)"/>
+  <!-- Radio signal inside icon -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="7.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 53 107 C 39 93 39 67 53 53" />
+    <path d="M 64 96 C 55 87 55 73 64 64" />
+    <circle cx="80" cy="80" r="7" fill="#FFFFFF" stroke="none" />
+    <path d="M 96 64 C 105 73 105 87 96 96" />
+    <path d="M 107 53 C 121 67 121 93 107 107" />
+  </g>
+  <!-- Typography matching exact Google Fonts Plus Jakarta Sans font style -->
+  <text x="160" y="90" font-family="'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" font-size="52" font-weight="800" fill="#FFFFFF" letter-spacing="-1">Stream <tspan fill="url(#textPinkGrad)">Allow</tspan></text>
+  <text x="162" y="118" font-family="'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#94A3B8" letter-spacing="3">YOUTUBE AUTOMATION SAAS</text>
+</svg>

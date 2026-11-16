@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { uploadVideoFileWithChunking } from '../../utils/chunkedUpload';
 import {
   Radio,
   Youtube,
@@ -26,7 +27,6 @@ export const CreateStreamPage: React.FC = () => {
   const {
     currentPath,
     channels,
-    playlists,
     addPlaylist,
     addStream,
     addVideoToPlaylist,
@@ -34,7 +34,8 @@ export const CreateStreamPage: React.FC = () => {
     setActiveViewingStream,
     showToast,
     currentUser,
-    userPlan
+    userPlan,
+    userMedia
   } = useApp();
 
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
@@ -46,30 +47,30 @@ export const CreateStreamPage: React.FC = () => {
   const [privacy, setPrivacy] = useState<'Public' | 'Unlisted' | 'Private'>('Public');
   const [thumbnail, setThumbnail] = useState('https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80');
 
-  // MP4 Video Upload States (Replaces Stream Thumbnail)
+  // MP4 Video Upload States (Isolated strictly to this user's account)
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string>('');
-  const [uploadedVideoName, setUploadedVideoName] = useState<string>('Deep Ambient Lo-Fi Tape #1.mp4');
-  const [uploadedVideoSize, setUploadedVideoSize] = useState<string>('48.5 MB');
-  const [uploadedVideoDuration, setUploadedVideoDuration] = useState<string>('15:20');
+  const [uploadedVideoName, setUploadedVideoName] = useState<string>('');
+  const [uploadedVideoSize, setUploadedVideoSize] = useState<string>('');
+  const [uploadedVideoDuration, setUploadedVideoDuration] = useState<string>('');
   const [videoResolution, setVideoResolution] = useState<string>('1080p FHD');
   const [isUploadingVideo, setIsUploadingVideo] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadedFilePath, setUploadedFilePath] = useState<string | null>(null);
+  const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null);
   const [planInactiveModalOpen, setPlanInactiveModalOpen] = useState(false);
   const [simulateInactivePlan, setSimulateInactivePlan] = useState(false);
   const videoFileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Separate RTMP Server URL and YouTube Stream Key states
-  const [rtmpServerUrl, setRtmpServerUrl] = useState('rtmp://a.rtmp.youtube.com/live2');
-  const [streamKey, setStreamKey] = useState('live_9381_auto_streamjoin_key');
+  const [rtmpServerUrl, setRtmpServerUrl] = useState('rtmps://a.rtmp.youtube.com/live2');
+  const [streamKey, setStreamKey] = useState('');
   const [showStreamKey, setShowStreamKey] = useState(false);
   const [dualStream, setDualStream] = useState(false);
   const [secondaryStreamUrl, setSecondaryStreamUrl] = useState('');
-  const [backupRtmpServer, setBackupRtmpServer] = useState('rtmp://b.rtmp.youtube.com/live2?backup=1');
+  const [backupRtmpServer, setBackupRtmpServer] = useState('rtmps://b.rtmp.youtube.com/live2?backup=1');
 
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState(playlists[0]?.id || '');
-  const [autoCreatedPlaylistId, setAutoCreatedPlaylistId] = useState<string | null>(null);
   const [uploadedVideoData, setUploadedVideoData] = useState<{
     title: string;
     duration: string;
@@ -80,20 +81,27 @@ export const CreateStreamPage: React.FC = () => {
     fileSizeBytes?: number;
     url: string;
     thumbnail: string;
+    mediaId?: string;
   } | null>(null);
   const [resolution, setResolution] = useState('1080p60');
   const [loop247, setLoop247] = useState(true);
   const [isScheduled, setIsScheduled] = useState(false);
   const [scheduleTime, setScheduleTime] = useState('Tomorrow, 8:00 PM');
 
-  const selectedPlaylist = playlists.find(p => p.id === (autoCreatedPlaylistId || selectedPlaylistId)) || playlists[0];
-
   // MP4 Video Upload Handler with Real Server Storage & FFprobe
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (!file.type.includes('video') && !/\.(mp4|mkv|mov|webm|flv)$/i.test(file.name)) {
-        showToast('Please upload a valid video file (MP4, MKV, MOV, or WebM).', 'error');
+      const validExtensions = ['.mp4', '.mov', '.mkv', '.webm', '.m4v', '.qt', '.quicktime', '.avi', '.flv', '.ts', '.3gp', '.hevc'];
+      const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+      const isVideoMime = !file.type || file.type.startsWith('video/') || file.type.includes('quicktime') || file.type === 'application/octet-stream';
+      if (!validExtensions.includes(ext) && !isVideoMime) {
+        showToast('Please upload a valid video file (MP4, QuickTime MOV, iPhone Video, WebM, or MKV).', 'error');
+        return;
+      }
+      const maxSizeBytes = 10 * 1024 * 1024 * 1024;
+      if (file.size > maxSizeBytes) {
+        showToast('File is too large. Maximum allowed size is 10 GB.', 'error');
         return;
       }
       const url = URL.createObjectURL(file);
@@ -117,130 +125,118 @@ export const CreateStreamPage: React.FC = () => {
         const mins = Math.floor(tempVideo.duration / 60);
         const secs = Math.floor(tempVideo.duration % 60);
         setUploadedVideoDuration(`${mins}:${secs < 10 ? '0' : ''}${secs}`);
-        if (tempVideo.videoHeight >= 1080) {
+        if (tempVideo.videoHeight >= 2160 || tempVideo.videoWidth >= 3840) {
+          setVideoResolution('4K UHD (2160p)');
+        } else if (tempVideo.videoHeight >= 1440 || tempVideo.videoWidth >= 2560) {
+          setVideoResolution('2K QHD (1440p)');
+        } else if (tempVideo.videoHeight >= 1080) {
           setVideoResolution('1080p FHD');
         } else if (tempVideo.videoHeight >= 720) {
           setVideoResolution('720p HD');
         }
       };
 
-      // Perform real file upload to backend via Multer /api/media/upload
+      // Perform real chunked file upload to backend /api/media/upload (supports up to 10 GB 1080p/4K MP4s)
       setIsUploadingVideo(true);
       setUploadProgress(0);
+      setUploadedFilePath(null);
+      setSelectedMediaId(null);
+      setUploadedVideoData(null);
 
-      const formData = new FormData();
-      formData.append('video', file);
-
-      const token = localStorage.getItem('streamjoin_token');
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/media/upload');
-      if (token) {
-        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-      }
-
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          const percent = Math.min(99, Math.round((event.loaded / event.total) * 100));
-          setUploadProgress(percent);
-        }
-      };
-
-      xhr.onload = () => {
-        setIsUploadingVideo(false);
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const res = JSON.parse(xhr.responseText);
-            const uploaded = res.file;
-            setUploadProgress(100);
-            setUploadedFilePath(uploaded.filePath);
-            if (uploaded.thumbnailUrl) {
-              setThumbnail(uploaded.thumbnailUrl);
-            }
-            if (uploaded.formattedDuration) {
-              setUploadedVideoDuration(uploaded.formattedDuration);
-            }
-            if (uploaded.resolution) {
-              setVideoResolution(uploaded.resolution);
-            }
-
-            const videoMeta = {
-              title: title.trim() || file.name.replace(/\.[^/.]+$/, ''),
-              duration: uploaded.formattedDuration || '05:00',
-              durationSeconds: uploaded.durationSeconds,
-              resolution: uploaded.resolution,
-              format: uploaded.format,
-              filePath: uploaded.filePath,
-              fileSizeBytes: uploaded.fileSizeBytes,
-              url: uploaded.url,
-              thumbnail: uploaded.thumbnailUrl || thumbnail
-            };
-            setUploadedVideoData(videoMeta);
-
-            if (autoCreatedPlaylistId) {
-              addVideoToPlaylist(autoCreatedPlaylistId, videoMeta);
-            }
-
-            showToast(`Video "${file.name}" uploaded successfully!`, 'success');
-          } catch {
-            showToast(`"${file.name}" uploaded to server storage.`, 'success');
+      uploadVideoFileWithChunking(file, (percent) => setUploadProgress(percent))
+        .then((uploaded) => {
+          setIsUploadingVideo(false);
+          setUploadProgress(100);
+          if (uploaded?.id) {
+            setSelectedMediaId(uploaded.id);
           }
-        } else {
-          showToast('Failed to upload video to server. Please try again.', 'error');
-        }
-      };
+          if (uploaded?.filePath) {
+            setUploadedFilePath(uploaded.filePath);
+          }
+          if (uploaded?.thumbnailUrl) {
+            setThumbnail(uploaded.thumbnailUrl);
+          }
+          if (uploaded?.url || uploaded?.fileUrl) {
+            setVideoPreviewUrl(uploaded.url || uploaded.fileUrl);
+          }
+          if (uploaded?.formattedDuration) {
+            setUploadedVideoDuration(uploaded.formattedDuration);
+          }
+          if (uploaded?.resolution) {
+            setVideoResolution(uploaded.resolution);
+          }
 
-      xhr.onerror = () => {
-        setIsUploadingVideo(false);
-        showToast('Network error during video upload.', 'error');
-      };
-
-      xhr.send(formData);
+          const videoMeta = {
+            title: title.trim() || file.name.replace(/\.[^/.]+$/, ''),
+            duration: uploaded?.formattedDuration || uploadedVideoDuration || '05:00',
+            durationSeconds: uploaded?.durationSeconds || 920,
+            resolution: uploaded?.resolution || videoResolution || '1080p FHD',
+            format: uploaded?.format || 'MP4',
+            filePath: uploaded?.filePath || undefined,
+            fileSizeBytes: uploaded?.fileSizeBytes || file.size,
+            url: uploaded?.url || uploaded?.fileUrl || `/media/${file.name}`,
+            thumbnail: uploaded?.thumbnailUrl || thumbnail,
+            mediaId: uploaded?.id || undefined
+          };
+          setUploadedVideoData(videoMeta);
+          showToast(`✓ Video "${file.name}" uploaded successfully! Cover photo updated.`, 'success');
+        })
+        .catch((uploadErr: any) => {
+          setIsUploadingVideo(false);
+          setUploadProgress(0);
+          setVideoFile(null);
+          setUploadedFilePath(null);
+          setSelectedMediaId(null);
+          setUploadedVideoData(null);
+          showToast(uploadErr?.message || `Failed to upload "${file.name}" to server. Please try again.`, 'error');
+        });
     }
   };
 
   const handleResetVideo = () => {
     setVideoFile(null);
     setVideoPreviewUrl('');
-    setUploadedVideoName('Deep Ambient Lo-Fi Tape #1.mp4');
-    setUploadedVideoSize('48.5 MB');
-    setUploadedVideoDuration('15:20');
+    setUploadedVideoName('');
+    setUploadedVideoSize('');
+    setUploadedVideoDuration('');
     setVideoResolution('1080p FHD');
-    setThumbnail('https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80');
+    setUploadedFilePath(null);
+    setSelectedMediaId(null);
     setUploadedVideoData(null);
-    showToast('Reset to default MP4 video preset.', 'info');
+    setThumbnail('https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80');
+    showToast('Video selection cleared. Reverted to default demo thumbnail.', 'info');
   };
 
-  const handleSelectPresetVideo = (
-    name: string,
-    size: string,
-    duration: string,
-    res: string,
-    thumb: string
-  ) => {
+  const handleSelectLibraryMedia = (mediaItem: any) => {
     setVideoFile(null);
-    setVideoPreviewUrl('');
-    setUploadedVideoName(name);
-    setUploadedVideoSize(size);
-    setUploadedVideoDuration(duration);
-    setVideoResolution(res);
-    setThumbnail(thumb);
+    setVideoPreviewUrl(mediaItem.fileUrl || mediaItem.url || '');
+    setUploadedVideoName(mediaItem.originalName || mediaItem.fileName || 'Video Track');
+    const sizeMb = mediaItem.fileSizeBytes ? `${(mediaItem.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB` : 'MP4 File';
+    setUploadedVideoSize(sizeMb);
+    setUploadedVideoDuration(mediaItem.formattedDuration || '05:00');
+    setVideoResolution(mediaItem.resolution || '1080p FHD');
+    if (mediaItem.thumbnailUrl) {
+      setThumbnail(mediaItem.thumbnailUrl);
+    }
+    setUploadedFilePath(mediaItem.filePath || null);
+    setSelectedMediaId(mediaItem.id);
     if (!title.trim()) {
-      setTitle(name.replace('.mp4', ''));
+      setTitle((mediaItem.originalName || mediaItem.fileName || '').replace(/\.[^/.]+$/, ''));
     }
-    const presetMeta = {
-      title: name.replace('.mp4', ''),
-      duration: duration,
-      durationSeconds: 900,
-      resolution: res,
-      format: 'MP4',
-      url: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600',
-      thumbnail: thumb
+    const meta = {
+      title: title.trim() || (mediaItem.originalName || mediaItem.fileName || '').replace(/\.[^/.]+$/, ''),
+      duration: mediaItem.formattedDuration || '05:00',
+      durationSeconds: mediaItem.durationSeconds || 300,
+      resolution: mediaItem.resolution || '1080p FHD',
+      format: mediaItem.format || 'MP4',
+      filePath: mediaItem.filePath,
+      fileSizeBytes: mediaItem.fileSizeBytes,
+      url: mediaItem.fileUrl || mediaItem.url,
+      thumbnail: mediaItem.thumbnailUrl || thumbnail,
+      mediaId: mediaItem.id
     };
-    setUploadedVideoData(presetMeta);
-    if (autoCreatedPlaylistId) {
-      addVideoToPlaylist(autoCreatedPlaylistId, presetMeta);
-    }
-    showToast(`Selected preset video: ${name}`, 'success');
+    setUploadedVideoData(meta);
+    showToast(`✓ Selected video "${mediaItem.originalName || mediaItem.fileName}" from your account library!`, 'success');
   };
 
   const copyToClipboard = (text: string, label: string) => {
@@ -300,60 +296,21 @@ export const CreateStreamPage: React.FC = () => {
     }
   };
 
-  const handleNext = async () => {
+  const handleNext = () => {
     if (currentStep === 1) {
       const streamTitle = title.trim();
       if (!streamTitle) {
         showToast('Please provide a Stream Title.', 'error');
         return;
       }
-
-      let activePlId = autoCreatedPlaylistId;
-
-      // Auto-create playlist with Stream Title if not already created
-      if (!activePlId) {
-        try {
-          const newPl = await addPlaylist({
-            name: streamTitle,
-            description: description.trim() || `Playlist for stream: ${streamTitle}`,
-            thumbnail: thumbnail,
-            status: 'Active',
-            isLiveLoop: true,
-            duration: uploadedVideoDuration || '15:20',
-            videosCount: 0,
-            videos: []
-          });
-
-          if (newPl && newPl.id) {
-            activePlId = newPl.id;
-            setAutoCreatedPlaylistId(newPl.id);
-            setSelectedPlaylistId(newPl.id);
-          }
-        } catch (err: any) {
-          console.warn('Auto create playlist error:', err);
-        }
+      if (!uploadedFilePath && !uploadedVideoData && !videoFile && !selectedMediaId) {
+        showToast('Please upload an MP4 video file or select a video from your media library before proceeding.', 'error');
+        return;
       }
-
-      // Attach video to this newly created playlist
-      if (activePlId) {
-        try {
-          const videoPayload = uploadedVideoData || {
-            title: streamTitle || uploadedVideoName.replace(/\.[^/.]+$/, ''),
-            duration: uploadedVideoDuration || '15:20',
-            durationSeconds: 920,
-            resolution: videoResolution || '1080p FHD',
-            format: 'MP4',
-            filePath: uploadedFilePath || undefined,
-            fileSizeBytes: 50000000,
-            url: videoPreviewUrl || 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600',
-            thumbnail: thumbnail
-          };
-          await addVideoToPlaylist(activePlId, videoPayload);
-        } catch (vErr) {
-          console.warn('Attach video error:', vErr);
-        }
+      if (isUploadingVideo) {
+        showToast('Video is currently uploading to server storage. Please wait until upload is complete.', 'info');
+        return;
       }
-
       setCurrentStep(2);
       return;
     }
@@ -363,8 +320,8 @@ export const CreateStreamPage: React.FC = () => {
         showToast('Please provide an RTMP Server URL.', 'error');
         return;
       }
-      if (!streamKey.trim()) {
-        showToast('Please provide your YouTube Stream Key.', 'error');
+      if (!streamKey.trim() || streamKey.includes('auto_streamjoin_key')) {
+        showToast('Please enter your actual YouTube Stream Key from YouTube Studio.', 'error');
         return;
       }
     }
@@ -388,7 +345,7 @@ export const CreateStreamPage: React.FC = () => {
     }
   };
 
-  const handleLaunchStream = () => {
+  const handleLaunchStream = async () => {
     // Check if user account plan is active (Super Admin and Admin accounts have full unrestricted access)
     const isPlanActive = isAdmin || (!simulateInactivePlan && currentUser?.status === 'Active' && 
       (currentUser?.renewalDaysLeft === undefined || currentUser?.renewalDaysLeft > 0));
@@ -398,45 +355,120 @@ export const CreateStreamPage: React.FC = () => {
       return;
     }
 
-    const cleanServerUrl = rtmpServerUrl.trim() || 'rtmp://a.rtmp.youtube.com/live2';
-    const cleanKey = streamKey.trim();
-
-    if (!cleanKey) {
-      showToast('YouTube Stream Key is required to broadcast.', 'error');
+    if (isUploadingVideo) {
+      showToast('Video is currently uploading to server storage. Please wait a moment until upload is complete.', 'info');
       return;
     }
 
-    const targetPlaylistId = autoCreatedPlaylistId || selectedPlaylistId;
+    if (!uploadedFilePath && !uploadedVideoData?.filePath && !selectedMediaId) {
+      showToast('Please upload an MP4 video file to server storage first.', 'error');
+      return;
+    }
 
-    const newStream = {
-      title: title.trim() || uploadedVideoName.replace(/\.[^/.]+$/, ''),
-      description: description || `24/7 Live broadcast of ${uploadedVideoName}`,
-      channelName: dualStream ? 'YouTube Live (Dual Stream Active)' : 'YouTube Live Broadcast',
-      channelId: 'yt-direct',
-      thumbnail,
-      status: isScheduled ? ('scheduled' as const) : ('live' as const),
-      date: 'Today',
-      time: 'Just now',
-      scheduledTime: isScheduled ? scheduleTime : undefined,
-      playlistId: targetPlaylistId,
-      streamKey: cleanKey,
-      rtmpUrl: cleanServerUrl,
-      resolution,
-      bitrate: resolution === '1080p60' ? '6000 kbps' : '4500 kbps',
-      loop: loop247
-    };
+    const cleanServerUrl = rtmpServerUrl.trim() || 'rtmps://a.rtmp.youtube.com/live2';
+    const cleanKey = streamKey.trim();
 
-    addStream(newStream);
-    showToast(
-      isScheduled
-        ? `Stream scheduled successfully for ${scheduleTime}!`
-        : 'Stream is now broadcasting LIVE on YouTube!',
-      'success'
-    );
-    if (currentPath.startsWith('admin/') || isAdmin) {
-      navigate('admin/streams');
-    } else {
-      navigate('user/my-streams');
+    if (!cleanKey || cleanKey.includes('auto_streamjoin_key')) {
+      showToast('Actual YouTube Stream Key is required from YouTube Studio to broadcast.', 'error');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const streamTitle = title.trim() || (uploadedVideoName ? uploadedVideoName.replace(/\.[^/.]+$/, '') : 'Live Broadcast');
+
+      // Every new stream creates its own brand-new dedicated playlist (100% isolated)
+      let targetPlaylistId: string | undefined;
+
+      try {
+        const newPl = await addPlaylist({
+          name: streamTitle,
+          description: description.trim() || `Playlist for stream: ${streamTitle}`,
+          thumbnail: thumbnail,
+          status: 'Active',
+          isLiveLoop: loop247,
+          duration: uploadedVideoDuration || '15:20',
+          videosCount: 1,
+          videos: []
+        });
+
+        if (newPl && newPl.id) {
+          targetPlaylistId = newPl.id;
+        }
+      } catch (plErr) {
+        console.warn('Dedicated playlist creation error on Go Live:', plErr);
+      }
+
+      // Attach video to this playlist
+      if (targetPlaylistId) {
+        try {
+          const finalFilePath = uploadedFilePath || uploadedVideoData?.filePath;
+          const finalMediaId = selectedMediaId || uploadedVideoData?.mediaId;
+          const cleanVideoUrl = (uploadedVideoData?.url && !uploadedVideoData.url.startsWith('blob:'))
+            ? uploadedVideoData.url
+            : (uploadedFilePath ? `/media/${uploadedFilePath.split('/').pop()}` : videoPreviewUrl);
+
+          const videoPayload = {
+            title: streamTitle || (uploadedVideoName ? uploadedVideoName.replace(/\.[^/.]+$/, '') : 'Live Broadcast'),
+            duration: uploadedVideoDuration || uploadedVideoData?.duration || '05:00',
+            durationSeconds: uploadedVideoData?.durationSeconds || 300,
+            resolution: videoResolution || uploadedVideoData?.resolution || '1080p FHD',
+            format: 'MP4',
+            mediaId: finalMediaId || undefined,
+            filePath: finalFilePath || undefined,
+            fileSizeBytes: uploadedVideoData?.fileSizeBytes || 50000000,
+            url: cleanVideoUrl,
+            thumbnail: thumbnail
+          };
+          await addVideoToPlaylist(targetPlaylistId, videoPayload);
+        } catch (vErr) {
+          console.warn('Attach video error on Go Live:', vErr);
+        }
+      }
+
+      const cleanVideoUrl = (uploadedVideoData?.url && !uploadedVideoData.url.startsWith('blob:'))
+        ? uploadedVideoData.url
+        : (uploadedFilePath ? `/media/${uploadedFilePath.split('/').pop()}` : videoPreviewUrl);
+
+      const newStream = {
+        title: streamTitle,
+        description: description || `24/7 Live broadcast of ${uploadedVideoName}`,
+        channelName: dualStream ? 'YouTube Live (Dual Stream Active)' : 'YouTube Live Broadcast',
+        channelId: 'yt-direct',
+        thumbnail,
+        status: isScheduled ? ('scheduled' as const) : ('live' as const),
+        date: 'Today',
+        time: 'Just now',
+        scheduledTime: isScheduled ? scheduleTime : undefined,
+        playlistId: targetPlaylistId,
+        mediaId: selectedMediaId || uploadedVideoData?.mediaId,
+        filePath: uploadedFilePath || uploadedVideoData?.filePath,
+        videoUrl: cleanVideoUrl,
+        videoDuration: uploadedVideoDuration || uploadedVideoData?.duration,
+        durationSeconds: uploadedVideoData?.durationSeconds,
+        streamKey: cleanKey,
+        rtmpUrl: cleanServerUrl,
+        resolution,
+        bitrate: resolution === '1080p60' ? '6000 kbps' : '4500 kbps',
+        loop: loop247
+      };
+
+      const started = await addStream(newStream);
+      if (started && isScheduled) {
+        showToast(`Stream scheduled successfully for ${scheduleTime}!`, 'success');
+      }
+      if (started) {
+        if (currentPath.startsWith('admin/') || isAdmin) {
+          navigate('admin/streams');
+        } else {
+          navigate('user/my-streams');
+        }
+      }
+    } catch (err: any) {
+      showToast(`Error launching stream: ${err.message}`, 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -592,171 +624,123 @@ export const CreateStreamPage: React.FC = () => {
               />
 
               <div className="p-4 sm:p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
-                  {/* Video Preview / Player Thumbnail */}
-                  <div className="relative group shrink-0 w-full sm:w-52 h-32 rounded-xl overflow-hidden border border-slate-700 bg-slate-950 shadow-md">
-                    {videoPreviewUrl ? (
-                      <video
-                        src={videoPreviewUrl}
-                        controls
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <>
-                        <img
-                          src={thumbnail}
-                          alt="Video Preview Thumbnail"
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                {uploadedVideoName ? (
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
+                    {/* Video Preview / Player Thumbnail */}
+                    <div className="relative group shrink-0 w-full sm:w-52 h-32 rounded-xl overflow-hidden border border-slate-700 bg-slate-950 shadow-md">
+                      {videoPreviewUrl ? (
+                        <video
+                          src={videoPreviewUrl}
+                          controls
+                          className="w-full h-full object-cover"
                         />
-                        <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                          <div className="w-10 h-10 rounded-full bg-[#FF1B6B]/90 text-white flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                            <Play className="w-5 h-5 ml-0.5 fill-white" />
+                      ) : (
+                        <>
+                          <img
+                            src={thumbnail}
+                            alt="Video Preview Thumbnail"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          />
+                          <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                            <div className="w-10 h-10 rounded-full bg-[#FF1B6B]/90 text-white flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                              <Play className="w-5 h-5 ml-0.5 fill-white" />
+                            </div>
                           </div>
-                        </div>
-                      </>
-                    )}
+                        </>
+                      )}
 
-                    <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between pointer-events-none">
-                      <span className="bg-black/80 backdrop-blur px-2 py-0.5 rounded text-[10px] font-mono font-bold text-white">
-                        {uploadedVideoDuration}
-                      </span>
-                      <span className="bg-[#FF1B6B]/90 backdrop-blur px-1.5 py-0.5 rounded text-[9px] font-bold text-white uppercase tracking-wider">
-                        {videoResolution}
-                      </span>
+                      <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between pointer-events-none">
+                        <span className="bg-black/80 backdrop-blur px-2 py-0.5 rounded text-[10px] font-mono font-bold text-white">
+                          {uploadedVideoDuration || '05:00'}
+                        </span>
+                        <span className="bg-[#FF1B6B]/90 backdrop-blur px-1.5 py-0.5 rounded text-[9px] font-bold text-white uppercase tracking-wider">
+                          {videoResolution}
+                        </span>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Upload Trigger & Details */}
-                  <div className="flex-1 space-y-2.5 w-full">
-                    <div className="flex flex-wrap items-center gap-2.5">
-                      <button
-                        type="button"
-                        onClick={() => videoFileInputRef.current?.click()}
-                        className="px-4 py-2 rounded-xl text-xs font-bold text-white gradient-brand hover:opacity-95 shadow-md shadow-rose-600/20 flex items-center gap-2 transition-all transform active:scale-95 cursor-pointer"
-                      >
-                        <Upload className="w-3.5 h-3.5" />
-                        <span>Upload MP4 Video</span>
-                      </button>
+                    {/* Upload Details & Actions */}
+                    <div className="flex-1 space-y-2.5 w-full">
+                      <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Film className="w-3.5 h-3.5 text-[#FF1B6B] shrink-0" />
+                            <span className="font-bold text-white truncate max-w-[200px] sm:max-w-xs">
+                              {uploadedVideoName}
+                            </span>
+                          </div>
+                          {uploadedVideoSize && (
+                            <span className="text-[11px] text-slate-400 font-mono shrink-0">
+                              {uploadedVideoSize}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] text-emerald-400 pt-0.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                          <span>Video verified & ready for your isolated 24/7 RTMP broadcast</span>
+                        </div>
+                      </div>
 
-                      {videoFile && (
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => videoFileInputRef.current?.click()}
+                          className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-slate-800 hover:bg-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Upload className="w-3 h-3" />
+                          <span>Change Video</span>
+                        </button>
                         <button
                           type="button"
                           onClick={handleResetVideo}
-                          className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 bg-slate-800 hover:text-white hover:bg-slate-700 transition-colors"
+                          className="px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-400 hover:text-white hover:bg-rose-600/20 transition-colors cursor-pointer"
                         >
-                          Reset
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Video File Status */}
-                    <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <Film className="w-3.5 h-3.5 text-[#FF1B6B] shrink-0" />
-                          <span className="font-bold text-white truncate max-w-[200px] sm:max-w-xs">
-                            {uploadedVideoName}
-                          </span>
-                        </div>
-                        <span className="text-[11px] text-slate-400 font-mono shrink-0">
-                          {uploadedVideoSize}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 text-[11px] text-emerald-400 pt-0.5">
-                        <CheckCircle2 className="w-3 h-3 shrink-0" />
-                        <span>Ready for 24/7 RTMP broadcast (H.264 video stream)</span>
-                      </div>
-                    </div>
-
-                    {/* Real Video Upload Progress Bar */}
-                    {isUploadingVideo && (
-                      <div className="p-3 rounded-xl bg-slate-950 border border-[#FF1B6B]/40 space-y-2">
-                        <div className="flex items-center justify-between text-xs font-semibold text-slate-200">
-                          <span className="flex items-center gap-1.5 text-[#FF1B6B]">
-                            <Upload className="w-3.5 h-3.5 animate-bounce" />
-                            <span>Uploading video to server storage & analyzing with FFprobe...</span>
-                          </span>
-                          <span className="font-mono text-white font-bold">{uploadProgress}%</span>
-                        </div>
-                        <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
-                          <div
-                            className="h-full bg-gradient-to-r from-[#FF1B6B] to-[#E11D48] transition-all duration-300 rounded-full"
-                            style={{ width: `${uploadProgress}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Quick Presets */}
-                    <div className="pt-1">
-                      <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider block mb-1.5">
-                        Or Choose Quick Preset Video:
-                      </span>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleSelectPresetVideo(
-                              'Deep Ambient Lo-Fi Tape #1.mp4',
-                              '48.5 MB',
-                              '15:20',
-                              '1080p FHD',
-                              'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80'
-                            )
-                          }
-                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 hover:text-white transition-colors"
-                        >
-                          LoFi Chill Tape (MP4)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleSelectPresetVideo(
-                              'Cyberpunk Synthwave 24-7 Live.mp4',
-                              '85.2 MB',
-                              '24:10',
-                              '1080p FHD',
-                              'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=600&auto=format&fit=crop&q=80'
-                            )
-                          }
-                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 hover:text-white transition-colors"
-                        >
-                          Gaming Synth (MP4)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleSelectPresetVideo(
-                              'Relaxing Piano & Rain Ambience.mp4',
-                              '62.0 MB',
-                              '18:45',
-                              '1080p FHD',
-                              'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=600&auto=format&fit=crop&q=80'
-                            )
-                          }
-                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 hover:text-white transition-colors"
-                        >
-                          Study Piano (MP4)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleSelectPresetVideo(
-                              'Coffee Shop Study & Chill Beats.mp4',
-                              '54.8 MB',
-                              '16:30',
-                              '1080p FHD',
-                              'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80'
-                            )
-                          }
-                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 hover:text-white transition-colors"
-                        >
-                          Coffee Chill (MP4)
+                          Clear
                         </button>
                       </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Empty state: Dropzone upload */}
+                    <div
+                      onClick={() => videoFileInputRef.current?.click()}
+                      className="border-2 border-dashed border-slate-700 hover:border-[#FF1B6B]/80 rounded-2xl p-6 sm:p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all bg-slate-950/50 hover:bg-slate-950/80 group"
+                    >
+                      <div className="w-12 h-12 rounded-2xl bg-[#FF1B6B]/10 text-[#FF1B6B] flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+                        <Upload className="w-6 h-6" />
+                      </div>
+                      <p className="text-xs font-bold text-white mb-1">
+                        Click or drag & drop to upload your MP4 Video
+                      </p>
+                      <p className="text-[11px] text-slate-400 max-w-sm">
+                        Upload your personal video file (MP4, QuickTime MOV, WebM, MKV up to 10 GB). It will broadcast strictly on your channel with your RTMP key.
+                      </p>
+                      <div className="mt-4 px-4 py-2 rounded-xl text-xs font-bold text-white gradient-brand shadow-md shadow-rose-600/20">
+                        Choose Video File
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Real Video Upload Progress Bar */}
+                {isUploadingVideo && (
+                  <div className="p-3 rounded-xl bg-slate-950 border border-[#FF1B6B]/40 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-200">
+                      <span className="flex items-center gap-1.5 text-[#FF1B6B]">
+                        <Upload className="w-3.5 h-3.5 animate-bounce" />
+                        <span>Uploading video to server storage & analyzing with FFprobe...</span>
+                      </span>
+                      <span className="font-mono text-white font-bold">{uploadProgress}%</span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-[#FF1B6B] to-[#E11D48] transition-all duration-300 rounded-full"
+                        style={{ width: `${uploadProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -872,8 +856,8 @@ export const CreateStreamPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      setRtmpServerUrl('rtmp://a.rtmp.youtube.com/live2');
-                      showToast('Reset to default YouTube RTMP endpoint', 'info');
+                      setRtmpServerUrl('rtmps://a.rtmp.youtube.com/live2');
+                      showToast('Reset to secure YouTube RTMPS endpoint', 'info');
                     }}
                     className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
                   >
@@ -885,7 +869,7 @@ export const CreateStreamPage: React.FC = () => {
                 type="text"
                 value={rtmpServerUrl}
                 onChange={e => setRtmpServerUrl(e.target.value)}
-                placeholder="rtmp://a.rtmp.youtube.com/live2"
+                placeholder="rtmps://a.rtmp.youtube.com/live2"
                 className="w-full bg-[#0D121F] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[#FF1B6B]"
               />
             </div>
@@ -929,9 +913,14 @@ export const CreateStreamPage: React.FC = () => {
                   className="w-full bg-[#0D121F] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[#FF1B6B] pr-10"
                 />
               </div>
-              <div className="flex items-center gap-2 pt-1 text-[11px] text-emerald-400">
-                <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                <span>AES-256-GCM hardware encryption active. Stream Key is never stored in plain text or logged.</span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 pt-1 text-[11px]">
+                <div className="flex items-center gap-1.5 text-emerald-400">
+                  <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                  <span>AES-256-GCM hardware encryption active. Stream Key is never stored in plain text.</span>
+                </div>
+                <span className="text-slate-400 text-[10px]">
+                  Copy from: <strong>YouTube Studio &gt; Go Live &gt; Stream Settings</strong>
+                </span>
               </div>
             </div>
 
@@ -975,7 +964,7 @@ export const CreateStreamPage: React.FC = () => {
             <div className="p-4 rounded-xl bg-blue-950/20 border border-blue-500/20 flex items-start gap-2.5 text-xs text-blue-300">
               <CheckCircle2 className="w-4 h-4 shrink-0 text-blue-400 mt-0.5" />
               <span>
-                Stream Join automatically encapsulates your video playlist into constant RTMP packets. No external broadcasting software (like OBS) is required on your computer.
+                Stream Allow automatically encapsulates your video playlist into constant RTMP packets. No external broadcasting software (like OBS) is required on your computer.
               </span>
             </div>
           </div>
@@ -1154,7 +1143,7 @@ export const CreateStreamPage: React.FC = () => {
 
             <div className="p-4 rounded-xl bg-emerald-950/20 border border-emerald-500/20 text-xs text-emerald-300 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-              <span>Stream Join cloud engine is pre-warmed and ready to broadcast to YouTube.</span>
+              <span>Stream Allow cloud engine is pre-warmed and ready to broadcast to YouTube.</span>
             </div>
           </div>
         )}
@@ -1186,11 +1175,16 @@ export const CreateStreamPage: React.FC = () => {
           ) : (
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={handleLaunchStream}
-              className="px-8 py-3 rounded-xl font-black text-sm text-white gradient-brand hover:opacity-95 shadow-xl shadow-rose-600/30 flex items-center gap-2 transition-all transform active:scale-95 cursor-pointer"
+              className="px-8 py-3 rounded-xl font-black text-sm text-white gradient-brand hover:opacity-95 shadow-xl shadow-rose-600/30 flex items-center gap-2 transition-all transform active:scale-95 cursor-pointer disabled:opacity-50"
             >
-              <Radio className="w-4 h-4 animate-pulse" />
-              <span>{isScheduled ? 'Schedule Stream' : 'Go Live Now'}</span>
+              {isSubmitting ? (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <Radio className="w-4 h-4 animate-pulse" />
+              )}
+              <span>{isSubmitting ? 'Starting Stream...' : (isScheduled ? 'Schedule Stream' : 'Go Live Now')}</span>
             </button>
           )}
         </div>

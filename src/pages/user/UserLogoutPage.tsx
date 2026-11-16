@@ -8,12 +8,14 @@ export const UserLogoutPage: React.FC = () => {
   return (
     <div className="min-h-[60vh] flex items-center justify-center p-4">
       <div className="w-full max-w-sm p-8 rounded-3xl bg-[#0F1626] border border-slate-800 shadow-2xl text-center space-y-6">
-        <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-tr from-[#FF1B6B] to-[#E11D48] flex items-center justify-center text-white shadow-xl shadow-rose-500/25">
-          <Radio className="w-7 h-7" />
-        </div>
+        <img
+          src="/logo-icon.png"
+          alt="Stream Allow Logo"
+          className="w-14 h-14 mx-auto rounded-2xl shadow-xl shadow-rose-500/25 object-contain"
+        />
 
         <div className="space-y-1">
-          <span className="text-xs font-bold text-slate-400 tracking-wider uppercase">Stream Join</span>
+          <span className="text-xs font-bold text-slate-400 tracking-wider uppercase">Stream Allow</span>
           <h2 className="text-2xl font-black text-white">Logout</h2>
           <p className="text-xs text-slate-400 pt-1">
             Are you sure you want to logout from your account?

@@ -21,44 +21,173 @@ export const LiveVideoPlayerModal: React.FC = () => {
   const {
     activeViewingStream,
     setActiveViewingStream,
+    streams,
     playlists,
     showToast
   } = useApp();
+
+  // Always read fresh stream state (including live currentTrackIndex & currentTrackStartedAt)
+  const liveStream = streams.find(s => s.id === activeViewingStream?.id) || activeViewingStream;
+
   const [isPlaying, setIsPlaying] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
   const [autoAdvance, setAutoAdvance] = useState(true);
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
+  const [elapsedDisplay, setElapsedDisplay] = useState('00:00');
 
   // Find linked playlist if any
-  const linkedPlaylist = playlists.find(p => p.id === activeViewingStream?.playlistId);
+  const linkedPlaylist = playlists.find(
+    p => p.id === liveStream?.playlistId ||
+      (liveStream?.title && p.name && p.name.trim().toLowerCase() === liveStream.title.trim().toLowerCase())
+  );
   const playlistTracks = linkedPlaylist?.videos || [];
-  const currentTrack = playlistTracks[currentTrackIndex];
+  const safeTrackIndex = playlistTracks.length > 0
+    ? ((currentTrackIndex % playlistTracks.length) + playlistTracks.length) % playlistTracks.length
+    : 0;
+  const currentTrack = playlistTracks[safeTrackIndex];
 
-  // Auto-advance to next video in sequence
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+  const lastSyncedKeyRef = React.useRef<string>('');
+  const pendingSeekRef = React.useRef<number | null>(null);
+
+  const parseDurationSec = (durStr?: string, secs?: number): number => {
+    if (secs && secs > 0) return secs;
+    if (!durStr) return 0;
+    const parts = durStr.trim().split(':').map(n => parseInt(n, 10));
+    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) return parts[0] * 60 + parts[1];
+    if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+    return 0;
+  };
+
+  const formatClock = (secs: number): string => {
+    const s = Math.max(0, Math.floor(secs));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    if (h > 0) return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${r.toString().padStart(2, '0')}`;
+    return `${m.toString().padStart(2, '0')}:${r.toString().padStart(2, '0')}`;
+  };
+
+  // Resolve actual playable video source and poster
+  const activeVideoUrl =
+    currentTrack?.url ||
+    (currentTrack as any)?.fileUrl ||
+    (liveStream as any)?.videoUrl ||
+    (liveStream as any)?.url ||
+    (playlistTracks.length > 0 ? (playlistTracks[0]?.url || (playlistTracks[0] as any)?.fileUrl) : '') ||
+    '';
+
+  const activePoster =
+    currentTrack?.thumbnail ||
+    (currentTrack as any)?.thumbnailUrl ||
+    liveStream?.thumbnail ||
+    linkedPlaylist?.thumbnail ||
+    '';
+
+  // Synchronize live modal track index & playback offset with active server broadcast
   useEffect(() => {
-    if (!isPlaying || playlistTracks.length <= 1 || !autoAdvance) return;
+    if (!liveStream) {
+      lastSyncedKeyRef.current = '';
+      pendingSeekRef.current = null;
+      return;
+    }
+    if (liveStream.status !== 'live') {
+      setIsPlaying(false);
+      if (videoRef.current) videoRef.current.pause();
+      return;
+    }
 
-    // Simulate track progression
+    setIsPlaying(true);
+    if (playlistTracks.length === 0) return;
+
+    const serverIdx = typeof liveStream.currentTrackIndex === 'number'
+      ? ((liveStream.currentTrackIndex % playlistTracks.length) + playlistTracks.length) % playlistTracks.length
+      : 0;
+    const syncKey = `${liveStream.id}:${serverIdx}:${liveStream.currentTrackStartedAt || ''}`;
+    if (syncKey === lastSyncedKeyRef.current) return;
+    lastSyncedKeyRef.current = syncKey;
+
+    const startedMs = liveStream.currentTrackStartedAt ? Date.parse(liveStream.currentTrackStartedAt) : NaN;
+    const elapsedSec = !isNaN(startedMs) ? Math.max(0, (Date.now() - startedMs) / 1000) : 0;
+
+    if (serverIdx !== safeTrackIndex) {
+      pendingSeekRef.current = elapsedSec > 1.5 ? elapsedSec : null;
+      setCurrentTrackIndex(serverIdx);
+    } else if (elapsedSec > 1.5 && videoRef.current) {
+      const vid = videoRef.current;
+      if (vid.duration && !isNaN(vid.duration) && elapsedSec < vid.duration - 1) {
+        if (Math.abs(vid.currentTime - elapsedSec) > 3.5) {
+          vid.currentTime = elapsedSec;
+        }
+      } else {
+        pendingSeekRef.current = elapsedSec;
+      }
+    }
+  }, [
+    liveStream?.id,
+    liveStream?.status,
+    liveStream?.currentTrackIndex,
+    liveStream?.currentTrackStartedAt,
+    playlistTracks.length,
+    safeTrackIndex
+  ]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      if (isPlaying && liveStream?.status === 'live') {
+        videoRef.current.play().catch(() => {});
+      } else {
+        videoRef.current.pause();
+      }
+    }
+  }, [isPlaying, safeTrackIndex, activeVideoUrl, liveStream?.status]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.muted = isMuted;
+    }
+  }, [isMuted]);
+
+  const handleAdvanceNext = React.useCallback((isManual: boolean = false) => {
+    if (playlistTracks.length === 0) return;
+    const nextIdx = (safeTrackIndex + 1) % playlistTracks.length;
+    pendingSeekRef.current = null;
+    if (nextIdx === safeTrackIndex) {
+      if (videoRef.current) {
+        videoRef.current.currentTime = 0;
+        if (isPlaying) videoRef.current.play().catch(() => {});
+      }
+    } else {
+      setCurrentTrackIndex(nextIdx);
+    }
+    if (isManual) {
+      showToast(`Next in sequence: "${playlistTracks[nextIdx]?.title}"`, 'info');
+    }
+  }, [playlistTracks, safeTrackIndex, isPlaying, showToast]);
+
+  // Fallback timer ONLY if <video> metadata/playback cannot drive onEnded (uses real track duration, never a fake 25s loop)
+  useEffect(() => {
+    if (!isPlaying || liveStream?.status !== 'live' || playlistTracks.length <= 1 || !autoAdvance) return;
+    if (activeVideoUrl) return; // HTML5 <video onEnded> drives exact track completion when video URL exists
+
+    const durSecs = parseDurationSec(currentTrack?.duration, (currentTrack as any)?.durationSeconds);
+    if (durSecs <= 0) return;
+
     const timer = setTimeout(() => {
-      const nextIndex = (currentTrackIndex + 1) % playlistTracks.length;
-      setCurrentTrackIndex(nextIndex);
-      const nextTrack = playlistTracks[nextIndex];
-      showToast(`Auto-advanced to: "${nextTrack?.title}"`, 'info');
-    }, 18000);
+      handleAdvanceNext(false);
+    }, durSecs * 1000);
 
     return () => clearTimeout(timer);
-  }, [isPlaying, autoAdvance, currentTrackIndex, playlistTracks, showToast]);
+  }, [isPlaying, liveStream?.status, autoAdvance, playlistTracks.length, activeVideoUrl, currentTrack, handleAdvanceNext]);
 
-  const handleNextTrack = () => {
-    if (playlistTracks.length === 0) return;
-    const nextIdx = (currentTrackIndex + 1) % playlistTracks.length;
-    setCurrentTrackIndex(nextIdx);
-    showToast(`Next in sequence: "${playlistTracks[nextIdx]?.title}"`, 'info');
-  };
+  const handleNextTrack = () => handleAdvanceNext(true);
 
   const handlePrevTrack = () => {
     if (playlistTracks.length === 0) return;
-    const prevIdx = (currentTrackIndex - 1 + playlistTracks.length) % playlistTracks.length;
+    pendingSeekRef.current = null;
+    const prevIdx = (safeTrackIndex - 1 + playlistTracks.length) % playlistTracks.length;
     setCurrentTrackIndex(prevIdx);
     showToast(`Previous video: "${playlistTracks[prevIdx]?.title}"`, 'info');
   };
@@ -70,8 +199,7 @@ export const LiveVideoPlayerModal: React.FC = () => {
   ]);
   const [newChatText, setNewChatText] = useState('');
 
-  if (!activeViewingStream) return null;
-
+  if (!activeViewingStream || !liveStream) return null;
 
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,24 +223,31 @@ export const LiveVideoPlayerModal: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-bold text-white text-base sm:text-lg">
-                  {currentTrack ? currentTrack.title : activeViewingStream.title}
+                  {currentTrack ? currentTrack.title : liveStream.title}
                 </h3>
-                <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-600 text-white uppercase tracking-wider flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
-                  LIVE
-                </span>
+                {liveStream.status === 'live' ? (
+                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-600 text-white uppercase tracking-wider flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                    LIVE
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase tracking-wider flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                    STREAM STOPPED
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400">
                 {linkedPlaylist ? (
                   <>
-                    Playlist: <span className="text-slate-200 font-medium">{linkedPlaylist.name}</span> (Track {currentTrackIndex + 1} of {playlistTracks.length})
+                    Playlist: <span className="text-slate-200 font-medium">{linkedPlaylist.name}</span> (Track {safeTrackIndex + 1} of {playlistTracks.length})
                   </>
                 ) : (
                   <>
-                    Channel: <span className="text-slate-200 font-medium">{activeViewingStream.channelName}</span>
+                    Channel: <span className="text-slate-200 font-medium">{liveStream.channelName}</span>
                   </>
                 )}
-                {' '}· Resolution: {activeViewingStream.resolution || '1080p60'} · Bitrate: {activeViewingStream.bitrate || '4500 kbps'}
+                {' '}· Resolution: {liveStream.resolution || '1080p60'} · Bitrate: {liveStream.bitrate || '4500 kbps'}
               </p>
             </div>
           </div>
@@ -132,40 +267,82 @@ export const LiveVideoPlayerModal: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 flex-1 overflow-hidden">
           {/* Main Video Screen Container */}
           <div className="lg:col-span-2 relative bg-black flex flex-col justify-between overflow-hidden min-h-[320px] sm:min-h-[420px]">
-            {/* Visualizer Background / Stream Feed */}
-            <div className="absolute inset-0 overflow-hidden">
-              <img
-                src={currentTrack ? currentTrack.thumbnail : activeViewingStream.thumbnail}
-                alt={currentTrack ? currentTrack.title : activeViewingStream.title}
-                className="w-full h-full object-cover filter brightness-[0.4] scale-105 transition-transform duration-1000"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/60" />
+            {/* Real Live Video Feed / Poster */}
+            <div className="absolute inset-0 overflow-hidden bg-black flex items-center justify-center">
+              {activeVideoUrl ? (
+                <video
+                  key={currentTrack?.id ? `${currentTrack.id}-${safeTrackIndex}` : `modal-track-${safeTrackIndex}`}
+                  ref={videoRef}
+                  src={activeVideoUrl}
+                  poster={activePoster}
+                  className="w-full h-full object-contain bg-black"
+                  autoPlay={liveStream.status === 'live'}
+                  playsInline
+                  muted={isMuted}
+                  loop={playlistTracks.length <= 1}
+                  onLoadedMetadata={(e) => {
+                    const vid = e.currentTarget;
+                    if (pendingSeekRef.current !== null && vid.duration && !isNaN(vid.duration) && pendingSeekRef.current < vid.duration - 1) {
+                      vid.currentTime = pendingSeekRef.current;
+                      pendingSeekRef.current = null;
+                    } else {
+                      pendingSeekRef.current = null;
+                    }
+                    if (liveStream.status === 'live' && isPlaying) {
+                      vid.play().catch(() => {});
+                    }
+                  }}
+                  onTimeUpdate={(e) => {
+                    setElapsedDisplay(formatClock(e.currentTarget.currentTime));
+                  }}
+                  onEnded={() => {
+                    if (autoAdvance && liveStream.status === 'live') {
+                      handleAdvanceNext(false);
+                    }
+                  }}
+                />
+              ) : (
+                <img
+                  src={activePoster}
+                  alt={currentTrack ? currentTrack.title : liveStream.title}
+                  className="w-full h-full object-contain bg-black"
+                />
+              )}
 
-              {/* Animated Equalizer Wave Overlay for simulated live music/stream */}
-              <div className="absolute bottom-16 left-6 right-6 flex items-end gap-1.5 h-20 opacity-80 pointer-events-none">
-                {[40, 70, 95, 30, 60, 85, 100, 45, 90, 65, 35, 75, 90, 50, 80, 100, 60, 40, 90, 50, 70, 95, 30, 60, 85, 45, 90, 65].map((h, i) => (
-                  <div
-                    key={i}
-                    className="flex-1 bg-gradient-to-t from-[#FF1B6B] to-[#3B82F6] rounded-t transition-all duration-300"
-                    style={{
-                      height: isPlaying ? `${(h * ((i % 3) + 1)) % 100}%` : '6%',
-                      animation: isPlaying ? `pulse 1.${(i % 5) + 2}s infinite alternate` : 'none'
-                    }}
-                  />
-                ))}
-              </div>
+              {/* Stream Stopped Overlay when not live */}
+              {liveStream.status !== 'live' && (
+                <div className="absolute inset-0 bg-black/80 backdrop-blur-xs flex flex-col items-center justify-center gap-3 p-6 text-center z-10 pointer-events-none">
+                  <div className="w-14 h-14 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <Radio className="w-7 h-7" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-white font-bold text-base">Broadcast Offline</h4>
+                    <p className="text-xs text-slate-400 max-w-sm">
+                      Stream has been stopped. Playlist playback and RTMP output are offline.
+                    </p>
+                  </div>
+                  <span className="px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    Status: Stream Stopped
+                  </span>
+                </div>
+              )}
+
+              {/* Gradient vignette on controls overlay */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/40 pointer-events-none" />
             </div>
 
             {/* Top Stream Overlays */}
             <div className="relative z-10 p-4 flex items-center justify-between">
               <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 text-xs text-white">
                 <Users className="w-3.5 h-3.5 text-rose-400" />
-                <span>{activeViewingStream.viewers.toLocaleString()} watching now</span>
+                <span>{liveStream.status === 'live' ? `${(liveStream.viewers ?? 0).toLocaleString()} watching now` : '0 watching (Offline)'}</span>
               </div>
-              <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 text-xs text-emerald-400">
+              <div className={`flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 text-xs ${liveStream.status === 'live' ? 'text-emerald-400' : 'text-amber-400'}`}>
                 <ShieldCheck className="w-3.5 h-3.5" />
                 <span>
-                  {playlistTracks.length > 0 ? 'Playlist Auto-Advance: Active' : 'RTMP Pipeline Active'}
+                  {liveStream.status === 'live'
+                    ? (playlistTracks.length > 0 ? 'Playlist Auto-Advance: Active' : 'RTMP Pipeline Active')
+                    : 'Broadcast Offline (Stream Stopped)'}
                 </span>
               </div>
             </div>
@@ -192,7 +369,7 @@ export const LiveVideoPlayerModal: React.FC = () => {
                       <SkipBack className="w-4 h-4" />
                     </button>
                     <span className="text-[10px] font-mono font-bold text-rose-400 px-1">
-                      {currentTrackIndex + 1}/{playlistTracks.length}
+                      {safeTrackIndex + 1}/{playlistTracks.length}
                     </span>
                     <button
                       type="button"
@@ -213,7 +390,7 @@ export const LiveVideoPlayerModal: React.FC = () => {
                   {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                 </button>
                 <span className="text-xs text-slate-300 font-mono">
-                  {isPlaying ? 'LIVE 02:44:19' : 'PAUSED'}
+                  {isPlaying && liveStream.status === 'live' ? `LIVE ${elapsedDisplay}` : 'PAUSED'}
                 </span>
               </div>
 

@@ -17,7 +17,7 @@ export const INITIAL_USERS: User[] = [
   {
     id: 'u-admin',
     name: 'Super Admin',
-    email: 'admin@streamjoin.com',
+    email: 'admin@streamallow.com',
     password: 'admin123',
     role: 'super_admin',
     avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
@@ -233,10 +233,10 @@ export const INITIAL_PLAYLISTS: PlaylistItem[] = [
     duration: '4h 32m',
     thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&auto=format&fit=crop&q=80',
     videos: [
-      { id: 'v1', title: 'Deep Ambient Lo-Fi Tape #1 (Rain & Beats)', duration: '12:45', url: 'https://cdn.streamjoin.com/media/ambient1.mp4', thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80' },
-      { id: 'v2', title: 'Midnight Chill Beats - Urban Tokyo Mix', duration: '14:20', url: 'https://cdn.streamjoin.com/media/chill2.mp4', thumbnail: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80' },
-      { id: 'v3', title: 'Rainy Cafe Vibes - Smooth Rhodes Piano', duration: '18:10', url: 'https://cdn.streamjoin.com/media/cafe3.mp4', thumbnail: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=400&auto=format&fit=crop&q=80' },
-      { id: 'v4', title: 'Dusk Coffee Shop Jazz & Study Vibes', duration: '16:05', url: 'https://cdn.streamjoin.com/media/jazz4.mp4', thumbnail: 'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=400&auto=format&fit=crop&q=80' }
+      { id: 'v1', title: 'Deep Ambient Lo-Fi Tape #1 (Rain & Beats)', duration: '12:45', url: 'https://cdn.streamallow.com/media/ambient1.mp4', thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&auto=format&fit=crop&q=80' },
+      { id: 'v2', title: 'Midnight Chill Beats - Urban Tokyo Mix', duration: '14:20', url: 'https://cdn.streamallow.com/media/chill2.mp4', thumbnail: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80' },
+      { id: 'v3', title: 'Rainy Cafe Vibes - Smooth Rhodes Piano', duration: '18:10', url: 'https://cdn.streamallow.com/media/cafe3.mp4', thumbnail: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=400&auto=format&fit=crop&q=80' },
+      { id: 'v4', title: 'Dusk Coffee Shop Jazz & Study Vibes', duration: '16:05', url: 'https://cdn.streamallow.com/media/jazz4.mp4', thumbnail: 'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=400&auto=format&fit=crop&q=80' }
     ]
   },
   {
@@ -248,9 +248,9 @@ export const INITIAL_PLAYLISTS: PlaylistItem[] = [
     duration: '8h 15m',
     thumbnail: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=500&auto=format&fit=crop&q=80',
     videos: [
-      { id: 'v5', title: 'Focus Piano Symphony - 432Hz Calm', duration: '20:00', url: 'https://cdn.streamjoin.com/media/piano1.mp4', thumbnail: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=400&auto=format&fit=crop&q=80' },
-      { id: 'v6', title: 'Binaural Alpha Waves for Deep Concentration', duration: '25:15', url: 'https://cdn.streamjoin.com/media/alpha2.mp4', thumbnail: 'https://images.unsplash.com/photo-1507676184212-d03ab07a01bf?w=400&auto=format&fit=crop&q=80' },
-      { id: 'v7', title: 'Library Rainstorm & Soft Cello Solos', duration: '19:40', url: 'https://cdn.streamjoin.com/media/cello3.mp4', thumbnail: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400&auto=format&fit=crop&q=80' }
+      { id: 'v5', title: 'Focus Piano Symphony - 432Hz Calm', duration: '20:00', url: 'https://cdn.streamallow.com/media/piano1.mp4', thumbnail: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=400&auto=format&fit=crop&q=80' },
+      { id: 'v6', title: 'Binaural Alpha Waves for Deep Concentration', duration: '25:15', url: 'https://cdn.streamallow.com/media/alpha2.mp4', thumbnail: 'https://images.unsplash.com/photo-1507676184212-d03ab07a01bf?w=400&auto=format&fit=crop&q=80' },
+      { id: 'v7', title: 'Library Rainstorm & Soft Cello Solos', duration: '19:40', url: 'https://cdn.streamallow.com/media/cello3.mp4', thumbnail: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=400&auto=format&fit=crop&q=80' }
     ]
   },
   {
@@ -262,8 +262,8 @@ export const INITIAL_PLAYLISTS: PlaylistItem[] = [
     duration: '3h 40m',
     thumbnail: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=500&auto=format&fit=crop&q=80',
     videos: [
-      { id: 'v8', title: 'Esports Championship Highlights Vol. 3', duration: '15:20', url: 'https://cdn.streamjoin.com/media/esports1.mp4', thumbnail: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=400&auto=format&fit=crop&q=80' },
-      { id: 'v9', title: 'Speedrun Marathon & Community Clutches', duration: '22:10', url: 'https://cdn.streamjoin.com/media/speedrun2.mp4', thumbnail: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?w=400&auto=format&fit=crop&q=80' }
+      { id: 'v8', title: 'Esports Championship Highlights Vol. 3', duration: '15:20', url: 'https://cdn.streamallow.com/media/esports1.mp4', thumbnail: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=400&auto=format&fit=crop&q=80' },
+      { id: 'v9', title: 'Speedrun Marathon & Community Clutches', duration: '22:10', url: 'https://cdn.streamallow.com/media/speedrun2.mp4', thumbnail: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?w=400&auto=format&fit=crop&q=80' }
     ]
   },
   {
@@ -275,8 +275,8 @@ export const INITIAL_PLAYLISTS: PlaylistItem[] = [
     duration: '6h 50m',
     thumbnail: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&auto=format&fit=crop&q=80',
     videos: [
-      { id: 'v10', title: 'Chillhop Records Autumn Beat Tape', duration: '18:40', url: 'https://cdn.streamjoin.com/media/autumn.mp4', thumbnail: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80' },
-      { id: 'v11', title: 'Sunset Boulevard Synthwave & LoFi Mix', duration: '24:00', url: 'https://cdn.streamjoin.com/media/synthwave.mp4', thumbnail: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=400&auto=format&fit=crop&q=80' }
+      { id: 'v10', title: 'Chillhop Records Autumn Beat Tape', duration: '18:40', url: 'https://cdn.streamallow.com/media/autumn.mp4', thumbnail: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80' },
+      { id: 'v11', title: 'Sunset Boulevard Synthwave & LoFi Mix', duration: '24:00', url: 'https://cdn.streamallow.com/media/synthwave.mp4', thumbnail: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=400&auto=format&fit=crop&q=80' }
     ]
   },
   {
@@ -288,7 +288,7 @@ export const INITIAL_PLAYLISTS: PlaylistItem[] = [
     duration: '5h 10m',
     thumbnail: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&auto=format&fit=crop&q=80',
     videos: [
-      { id: 'v12', title: 'Best Acoustic Sessions & Live Performances', duration: '30:00', url: 'https://cdn.streamjoin.com/media/acoustic.mp4', thumbnail: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=400&auto=format&fit=crop&q=80' }
+      { id: 'v12', title: 'Best Acoustic Sessions & Live Performances', duration: '30:00', url: 'https://cdn.streamallow.com/media/acoustic.mp4', thumbnail: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=400&auto=format&fit=crop&q=80' }
     ]
   }
 ];
@@ -566,7 +566,7 @@ export const INITIAL_STAFF: StaffMember[] = [
     id: 'st-1',
     name: 'Admin',
     role: 'Super Admin',
-    email: 'admin@streamjoin.com',
+    email: 'admin@streamallow.com',
     status: 'Active',
     lastActive: 'Just now',
     avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
@@ -576,7 +576,7 @@ export const INITIAL_STAFF: StaffMember[] = [
     id: 'st-2',
     name: 'Rafiq',
     role: 'Manager',
-    email: 'rafiq@streamjoin.com',
+    email: 'rafiq@streamallow.com',
     status: 'Active',
     lastActive: '5m ago',
     avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80',
@@ -586,7 +586,7 @@ export const INITIAL_STAFF: StaffMember[] = [
     id: 'st-3',
     name: 'Jannat',
     role: 'Support',
-    email: 'jannat@streamjoin.com',
+    email: 'jannat@streamallow.com',
     status: 'Active',
     lastActive: '12m ago',
     avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
@@ -596,7 +596,7 @@ export const INITIAL_STAFF: StaffMember[] = [
     id: 'st-4',
     name: 'Karim',
     role: 'Finance',
-    email: 'karim@streamjoin.com',
+    email: 'karim@streamallow.com',
     status: 'Active',
     lastActive: '30m ago',
     avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&auto=format&fit=crop&q=80',
@@ -606,7 +606,7 @@ export const INITIAL_STAFF: StaffMember[] = [
     id: 'st-5',
     name: 'Mitu',
     role: 'Moderator',
-    email: 'mitu@streamjoin.com',
+    email: 'mitu@streamallow.com',
     status: 'Active',
     lastActive: '1h ago',
     avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&auto=format&fit=crop&q=80',
@@ -744,7 +744,7 @@ export const INITIAL_ACTIVITY_LOGS: ActivityLog[] = [
     category: 'admin',
     ipAddress: '103.52.12.47',
     timestamp: 'Oct 30, 2026 06:45 PM',
-    details: 'Created internal test account user@streamjoin.com'
+    details: 'Created internal test account user@streamallow.com'
   },
   {
     id: 'log-4',
@@ -831,21 +831,21 @@ export const INITIAL_MARKETING_CAMPAIGNS: MarketingCampaign[] = [
 ];
 
 export const INITIAL_SEO: SeoSettings = {
-  websiteTitle: 'Stream Join - YouTube Live Streaming Platform',
-  metaDescription: 'Stream Join helps you grow your YouTube channel with automated live streaming, playlist streaming, and powerful tools. Start today and grow faster.',
-  metaKeywords: 'YouTube live stream, automated streaming, playlist streaming, live stream tool, stream join, bdt live streaming, 24/7 youtube stream',
-  ogTitle: 'Stream Join - Grow Your YouTube Live Stream',
+  websiteTitle: 'Stream Allow - YouTube Live Streaming Platform',
+  metaDescription: 'Stream Allow helps you grow your YouTube channel with automated live streaming, playlist streaming, and powerful tools. Start today and grow faster.',
+  metaKeywords: 'YouTube live stream, automated streaming, playlist streaming, live stream tool, stream allow, bdt live streaming, 24/7 youtube stream',
+  ogTitle: 'Stream Allow - Grow Your YouTube Live Stream',
   ogDescription: 'Automate, Manage and Grow Your YouTube Live Streams Easily.',
-  ogImage: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=1200&auto=format&fit=crop&q=80',
-  canonicalUrl: 'https://streamjoin.com',
-  robotsTxt: 'User-agent: *\nAllow: /\nDisallow: /admin/\nDisallow: /api/\nSitemap: https://streamjoin.com/sitemap.xml',
+  ogImage: 'https://streamallow.com/logo-og.png',
+  canonicalUrl: 'https://streamallow.com',
+  robotsTxt: 'User-agent: *\nAllow: /\nDisallow: /admin/\nDisallow: /user/\nDisallow: /api/\nDisallow: /public/login\nDisallow: /public/register\nDisallow: /login\nDisallow: /register\nSitemap: https://streamallow.com/sitemap.xml',
   enableSitemap: true
 };
 
 export const INITIAL_SYSTEM_SETTINGS: SystemSettingsData = {
-  websiteName: 'Stream Join',
-  websiteUrl: 'https://streamjoin.com',
-  adminEmail: 'admin@streamjoin.com',
+  websiteName: 'Stream Allow',
+  websiteUrl: 'https://streamallow.com',
+  adminEmail: 'admin@streamallow.com',
   timezone: 'Asia/Dhaka (GMT+6)',
   language: 'English',
   maintenanceMode: false,
@@ -861,7 +861,7 @@ export const INITIAL_SYSTEM_SETTINGS: SystemSettingsData = {
   smtpHost: 'smtp.sendgrid.net',
   smtpPort: 587,
   smtpUser: 'apikey',
-  smtpSenderName: 'Stream Join Notifications',
+  smtpSenderName: 'Stream Allow Notifications',
   storageProvider: 'google_cloud'
 };
 
@@ -877,7 +877,7 @@ export const BLOG_POSTS = [
     content: `Streaming 24/7 on YouTube has emerged as one of the fastest ways for music artists, podcasters, gaming creators, and education channels to compound organic watch time and subscriber acquisition.
 
 1. High Bitrate and Constant Keyframe Interval
-YouTube Live recommends a keyframe interval of 2 seconds and consistent CBR encoding. Stream Join handles this natively in the cloud without loading your local CPU.
+YouTube Live recommends a keyframe interval of 2 seconds and consistent CBR encoding. Stream Allow handles this natively in the cloud without loading your local CPU.
 
 2. Engaging Thumbnails and Live Chat Polls
 A dynamic thumbnail with bold contrast and live badges drives CTR above 12%. Make sure to engage viewers with automated chatbots and regular interactive polls.
@@ -903,20 +903,20 @@ Recommended Specifications:
   },
   {
     id: 'blog-3',
-    title: 'How to Use Playlist Streaming on Stream Join',
+    title: 'How to Use Playlist Streaming on Stream Allow',
     date: 'Oct 22, 2026',
     category: 'Updates',
     readTime: '4 min read',
     image: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
     summary: 'Learn how to combine pre-recorded videos into continuous looping playlists and broadcast them directly to YouTube with automated scheduling.',
-    content: `With Stream Join, you can upload videos or paste YouTube URLs to form playlists. Our cloud server stitches and loops them smoothly without audio glitches or frame drops.`
+    content: `With Stream Allow, you can upload videos or paste YouTube URLs to form playlists. Our cloud server stitches and loops them smoothly without audio glitches or frame drops.`
   }
 ];
 
 export const FAQ_ITEMS = [
   {
-    q: 'What is Stream Join?',
-    a: 'Stream Join is a modern SaaS platform designed for YouTube creators, music labels, radio stations, and businesses to automate, schedule, and run uninterrupted YouTube live streams directly from the cloud.'
+    q: 'What is Stream Allow?',
+    a: 'Stream Allow is a modern SaaS platform designed for YouTube creators, music labels, radio stations, and businesses to automate, schedule, and run uninterrupted YouTube live streams directly from the cloud.'
   },
   {
     q: 'How does it work?',
@@ -932,7 +932,7 @@ export const FAQ_ITEMS = [
   },
   {
     q: 'Is it safe to use?',
-    a: 'Absolutely. Stream Join connects to YouTube via official OAuth 2.0 and YouTube Data API v3 standards. We never store or access your Google account password.'
+    a: 'Absolutely. Stream Allow connects to YouTube via official OAuth 2.0 and YouTube Data API v3 standards. We never store or access your Google account password.'
   },
   {
     q: 'Do you offer refunds?',
@@ -940,6 +940,39 @@ export const FAQ_ITEMS = [
   },
   {
     q: 'How can I get support?',
-    a: 'We provide 24/7 Live Chat directly inside your dashboard, ticket-based support, and direct email assistance at support@streamjoin.com.'
+    a: 'We provide 24/7 Live Chat directly inside your dashboard, ticket-based support, and direct email assistance at support@streamallow.com.'
   }
 ];
+
+export const DEFAULT_PAYMENT_GATEWAY_SETTINGS = {
+  bkashNumber: '01712-345678',
+  bkashType: 'Merchant' as const,
+  bkashQrUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=01712345678',
+  bkashInstructions: [
+    'bKash অ্যাপ খুলুন',
+    'Payment / Make Payment এ যান (অথবা Send Money)',
+    'এই নম্বরে নির্ধারিত টাকা পাঠান',
+    'Transaction ID নিচের বক্সে দিন',
+    'Submit Payment করে অপেক্ষা করুন'
+  ],
+  nagadNumber: '01812-345678',
+  nagadType: 'Merchant' as const,
+  nagadQrUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=01812345678',
+  nagadInstructions: [
+    'Nagad অ্যাপ খুলুন',
+    'Payment / Send Money এ যান',
+    'এই নম্বরে নির্ধারিত টাকা পাঠান',
+    'Transaction ID নিচের বক্সে দিন',
+    'Submit Payment করে অপেক্ষা করুন'
+  ],
+  qrCodeImageUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=STREAMALLOW-PAY-01712345678',
+  qrCodeInstructions: [
+    'যেকোনো ব্যাংকিং অ্যাপ (Bkash/Nagad/Upay/Citytouch/NexusPay) দিয়ে QR স্ক্যান করুন',
+    'টাকা পাঠিয়ে প্রাপ্ত Transaction ID নিচে লিখে Submit করুন'
+  ],
+  verificationNotice: 'Payment Verification: সাধারণত ৫-১০ মিনিটের মধ্যে অ্যাডমিন আপনার পেমেন্ট যাচাই করে অ্যাকাউন্ট অ্যাক্টিভ করে দেবে।',
+  stripePublicKey: 'pk_test_TYoo61ETXmGVwBoomWJwQLsL',
+  stripeEnabled: true,
+  bkashEnabled: true,
+  nagadEnabled: true
+};

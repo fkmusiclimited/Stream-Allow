@@ -79,7 +79,7 @@ export const ConnectChannelModal: React.FC<ConnectChannelModalProps> = ({ isOpen
                 </div>
                 <h4 className="text-lg font-bold text-white">Link Your YouTube Account</h4>
                 <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                  Stream Join requires permission to broadcast scheduled streams and read your live analytics via official YouTube Data API v3.
+                  Stream Allow requires permission to broadcast scheduled streams and read your live analytics via official YouTube Data API v3.
                 </p>
               </div>
 

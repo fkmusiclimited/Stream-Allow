@@ -7,15 +7,26 @@ import {
   ShieldCheck,
   AlertCircle,
   X,
-  Sparkles
+  Sparkles,
+  Clock
 } from 'lucide-react';
 
 export const UserSubscriptionPage: React.FC = () => {
-  const { plans, currentUser, isUserPlanActive, formatPrice, upgradeUserPlan, cancelUserPlan, showToast } = useApp();
+  const {
+    plans,
+    currentUser,
+    isUserPlanActive,
+    formatPrice,
+    openCheckoutModal,
+    userTransactions,
+    cancelUserPlan,
+    showToast
+  } = useApp();
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
 
   const currentPlan = plans.find(p => p.id === (currentUser?.plan?.toLowerCase() || 'basic')) || plans[0];
   const otherPlans = plans.filter(p => p.id !== currentPlan.id);
+  const pendingTx = userTransactions.find(t => t.status === 'Pending');
 
   const handleConfirmCancel = () => {
     cancelUserPlan();
@@ -28,6 +39,38 @@ export const UserSubscriptionPage: React.FC = () => {
         <h1 className="text-2xl font-extrabold text-white">My Subscription</h1>
         <p className="text-xs text-slate-400">Manage your subscription, activate plans, and process secure payments.</p>
       </div>
+
+      {/* Pending Payment Verification Banner */}
+      {pendingTx && (
+        <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg shadow-amber-950/20">
+          <div className="flex items-start gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 mt-0.5">
+              <Clock className="w-5 h-5 animate-pulse" />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="font-extrabold text-amber-300 text-sm">
+                  পেমেন্ট যাচাইকরণ চলমান (Verification Pending)
+                </span>
+                <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  {pendingTx.paymentMethod}
+                </span>
+              </div>
+              <p className="text-xs text-amber-200/90 leading-relaxed">
+                আপনার সাবমিট করা Transaction ID: <strong className="font-mono bg-slate-950 px-2 py-0.5 rounded text-white border border-amber-500/40">{pendingTx.transactionId}</strong>
+                {' '}— সাধারণত ৫-১০ মিনিটের মধ্যে অ্যাডমিন আপনার পেমেন্ট যাচাই করে একাউন্ট অ্যাক্টিভ করে দেবে।
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => openCheckoutModal(currentPlan.id)}
+            className="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-bold border border-amber-500/40 transition-colors whitespace-nowrap cursor-pointer"
+          >
+            পেমেন্ট বিবরণ দেখুন
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Left Current Plan Card */}
@@ -76,19 +119,15 @@ export const UserSubscriptionPage: React.FC = () => {
           <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-slate-800">
             {!isUserPlanActive ? (
               <button
-                onClick={() => {
-                  upgradeUserPlan(currentPlan.id as any, 'bKash');
-                }}
-                className="flex-1 py-3.5 rounded-xl font-black text-xs text-white gradient-brand hover:opacity-95 shadow-xl shadow-rose-600/30 transition-all text-center cursor-pointer"
+                onClick={() => openCheckoutModal(currentPlan.id)}
+                className="flex-1 py-3.5 rounded-xl font-black text-xs text-white gradient-brand hover:opacity-95 shadow-xl shadow-rose-600/30 transition-all text-center cursor-pointer flex items-center justify-center gap-2"
               >
-                Activate & Pay Now ({formatPrice(currentPlan.priceUSD, currentPlan.priceBDT)})
+                <span>Activate & Pay Now ({formatPrice(currentPlan.priceUSD, currentPlan.priceBDT)})</span>
               </button>
             ) : (
               <>
                 <button
-                  onClick={() => {
-                    upgradeUserPlan('business', 'bKash');
-                  }}
+                  onClick={() => openCheckoutModal('business')}
                   className="flex-1 py-3 rounded-xl font-bold text-xs text-white gradient-brand hover:opacity-95 shadow-md shadow-rose-600/30 transition-all text-center cursor-pointer"
                 >
                   Upgrade to Business
@@ -137,8 +176,8 @@ export const UserSubscriptionPage: React.FC = () => {
                 </div>
 
                 <button
-                  onClick={() => upgradeUserPlan(p.id)}
-                  className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-[#FF1B6B] hover:text-white text-slate-200 font-bold text-xs border border-slate-700 transition-all"
+                  onClick={() => openCheckoutModal(p.id)}
+                  className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-[#FF1B6B] hover:text-white text-slate-200 font-bold text-xs border border-slate-700 transition-all cursor-pointer"
                 >
                   Switch to {p.name}
                 </button>

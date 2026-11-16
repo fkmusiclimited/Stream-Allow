@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Globe, Edit, ExternalLink, Check, Eye, Layout } from 'lucide-react';
+import { Globe, Edit, ExternalLink, Check, Eye, Layout, Tv } from 'lucide-react';
 
 export const WebsiteManagementPage: React.FC = () => {
   const { navigate, showToast } = useApp();
   const [selectedPage, setSelectedPage] = useState('Homepage');
-  const [headline, setHeadline] = useState('Grow Your YouTube Live Stream with Stream Join');
+  const [headline, setHeadline] = useState('Grow Your YouTube Live Stream with Stream Allow');
   const [subheading, setSubheading] = useState('Automate, Manage and Grow Your YouTube Live Streams Easily. Perfect for music, radio, gaming, podcasts and more.');
 
   const pages = [
@@ -32,6 +32,14 @@ export const WebsiteManagementPage: React.FC = () => {
           <h1 className="text-2xl font-extrabold text-white">Website Pages</h1>
           <p className="text-xs text-slate-400">Edit public marketing copy, banners, and layout settings.</p>
         </div>
+
+        <button
+          onClick={() => navigate('admin/demo-video')}
+          className="px-4 py-2 rounded-xl text-xs font-bold text-white gradient-brand hover:opacity-95 shadow-md shadow-rose-600/30 flex items-center gap-2 cursor-pointer transition-all"
+        >
+          <Tv className="w-3.5 h-3.5" />
+          <span>Manage Homepage Demo Video</span>
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">

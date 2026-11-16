@@ -127,7 +127,7 @@ export const UserSupportPage: React.FC = () => {
                 <p className="text-[11px] text-emerald-400 font-medium">● Online · Typically replies in seconds</p>
               </div>
             </div>
-            <span className="text-[11px] text-slate-400 font-mono">Stream Join 24/7 Care</span>
+            <span className="text-[11px] text-slate-400 font-mono">Stream Allow 24/7 Care</span>
           </div>
 
           {/* Messages Area */}

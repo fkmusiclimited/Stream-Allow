@@ -113,7 +113,7 @@ export const FeaturesPage: React.FC = () => {
             Never Let Your YouTube Live Stream Stop
           </h2>
           <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-            Standard broadcasting tools like OBS require your computer to run 24 hours a day, heating your GPU and consuming bandwidth. Stream Join handles RTMP encoding in enterprise cloud clusters.
+            Standard broadcasting tools like OBS require your computer to run 24 hours a day, heating your GPU and consuming bandwidth. Stream Allow handles RTMP encoding in enterprise cloud clusters.
           </p>
           <ul className="space-y-3 text-xs sm:text-sm text-slate-300">
             <li className="flex items-center gap-2">

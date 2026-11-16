@@ -21,7 +21,7 @@ export const InvoiceModal: React.FC = () => {
         {/* Top Action Bar (Hidden during print) */}
         <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white border-b border-slate-800">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-sm tracking-wide">STREAM JOIN OFFICIAL RECEIPT</span>
+            <span className="font-bold text-sm tracking-wide">STREAM ALLOW OFFICIAL RECEIPT</span>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -56,12 +56,12 @@ export const InvoiceModal: React.FC = () => {
                 <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-[#FF1B6B] to-[#E11D48] flex items-center justify-center text-white font-black text-lg">
                   S
                 </div>
-                <span className="text-xl font-extrabold tracking-tight text-slate-950">STREAM JOIN</span>
+                <span className="text-xl font-extrabold tracking-tight text-slate-950">STREAM ALLOW</span>
               </div>
               <p className="text-xs text-slate-500 mt-2">
-                Stream Join Technologies Ltd.<br />
+                Stream Allow Technologies Ltd.<br />
                 Gulshan-2, Dhaka 1212, Bangladesh<br />
-                support@streamjoin.com · https://streamjoin.com
+                support@streamallow.com · https://streamallow.com
               </p>
             </div>
             <div className="text-right">
@@ -140,9 +140,9 @@ export const InvoiceModal: React.FC = () => {
           <div className="pt-6 border-t border-slate-200 text-center text-xs text-slate-400">
             <p className="flex items-center justify-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              Verified secure transaction powered by Stream Join Cloud Payment Gateway.
+              Verified secure transaction powered by Stream Allow Cloud Payment Gateway.
             </p>
-            <p className="mt-1">Thank you for building your YouTube streaming empire with Stream Join!</p>
+            <p className="mt-1">Thank you for building your YouTube streaming empire with Stream Allow!</p>
           </div>
         </div>
       </div>

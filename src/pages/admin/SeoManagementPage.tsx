@@ -101,7 +101,7 @@ export const SeoManagementPage: React.FC = () => {
             {/* Google SERP Snippet Preview */}
             <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
               <span className="text-[10px] text-slate-500 font-bold uppercase">Search Result Snippet Preview</span>
-              <p className="text-xs text-emerald-400 font-mono">https://streamjoin.com</p>
+              <p className="text-xs text-emerald-400 font-mono">https://streamallow.com</p>
               <h4 className="text-sm font-bold text-sky-400 hover:underline cursor-pointer">{title}</h4>
               <p className="text-xs text-slate-400 line-clamp-2">{desc}</p>
             </div>
@@ -137,7 +137,7 @@ export const SeoManagementPage: React.FC = () => {
           <div className="space-y-3 text-xs text-slate-300">
             <p>XML Sitemap is automatically regenerated whenever website pages or blog articles are published.</p>
             <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 font-mono text-emerald-400">
-              https://streamjoin.com/sitemap.xml (Status: 200 OK · 18 Indexed URLs)
+              https://streamallow.com/sitemap.xml (Status: 200 OK · 18 Indexed URLs)
             </div>
             <button
               onClick={() => showToast('Google Search Console pinged with updated sitemap.xml', 'success')}
@@ -152,18 +152,35 @@ export const SeoManagementPage: React.FC = () => {
           <div className="space-y-3 text-xs">
             <p className="text-slate-400">JSON-LD Structured Data Schema for Rich Results:</p>
             <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-sky-300 overflow-x-auto">
-{`{
-  "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "Stream Join",
-  "operatingSystem": "All",
-  "applicationCategory": "MultimediaApplication",
-  "offers": {
-    "@type": "Offer",
-    "price": "9.00",
-    "priceCurrency": "USD"
+{`[
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "Stream Allow",
+    "url": "https://streamallow.com",
+    "logo": "https://streamallow.com/logo.png",
+    "image": "https://streamallow.com/logo-og.png"
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Stream Allow",
+    "url": "https://streamallow.com"
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Stream Allow",
+    "operatingSystem": "All",
+    "applicationCategory": "MultimediaApplication",
+    "logo": "https://streamallow.com/logo.png",
+    "offers": {
+      "@type": "Offer",
+      "price": "9.00",
+      "priceCurrency": "USD"
+    }
   }
-}`}
+]`}
             </pre>
           </div>
         )}

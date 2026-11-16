@@ -45,7 +45,7 @@ export const TermsPrivacyPage: React.FC = () => {
                 <span className="text-[#FF1B6B]">1.</span> Introduction
               </h2>
               <p>
-                These Terms and Conditions govern your access to and use of Stream Join, an automated YouTube live streaming SaaS platform provided by Stream Join Technologies Ltd. By registering or using our streaming services, you agree to comply with and be bound by these terms.
+                These Terms and Conditions govern your access to and use of Stream Allow, an automated YouTube live streaming SaaS platform provided by Stream Allow Technologies Ltd. By registering or using our streaming services, you agree to comply with and be bound by these terms.
               </p>
             </section>
 
@@ -63,7 +63,7 @@ export const TermsPrivacyPage: React.FC = () => {
                 <span className="text-[#FF1B6B]">3.</span> Acceptable Use & Content Ownership
               </h2>
               <p>
-                You agree not to use Stream Join for any illegal, infringing, or harmful activities. You must possess all necessary broadcasting rights, licenses, and permissions for all media, music, and video content transmitted via your playlists to YouTube.
+                You agree not to use Stream Allow for any illegal, infringing, or harmful activities. You must possess all necessary broadcasting rights, licenses, and permissions for all media, music, and video content transmitted via your playlists to YouTube.
               </p>
             </section>
 
@@ -72,7 +72,7 @@ export const TermsPrivacyPage: React.FC = () => {
                 <span className="text-[#FF1B6B]">4.</span> YouTube API Compliance
               </h2>
               <p>
-                Stream Join connects with the YouTube Data API v3. By connecting your YouTube account, you also agree to be bound by the{' '}
+                Stream Allow connects with the YouTube Data API v3. By connecting your YouTube account, you also agree to be bound by the{' '}
                 <a
                   href="https://www.youtube.com/t/terms"
                   target="_blank"
@@ -122,7 +122,7 @@ export const TermsPrivacyPage: React.FC = () => {
                 Data Security & Token Revocation
               </h2>
               <p>
-                All data transmission is encrypted via TLS 1.3. You may revoke Stream Join&apos;s access to your YouTube channel at any time directly through the Google Security settings page or inside the YouTube Channels management page in your Stream Join dashboard.
+                All data transmission is encrypted via TLS 1.3. You may revoke Stream Allow&apos;s access to your YouTube channel at any time directly through the Google Security settings page or inside the YouTube Channels management page in your Stream Allow dashboard.
               </p>
             </section>
           </>

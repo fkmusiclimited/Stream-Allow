@@ -36,12 +36,14 @@ export const Navbar: React.FC = () => {
           onClick={() => navigate('public/home')}
           className="flex items-center gap-3 cursor-pointer group shrink-0"
         >
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#FF1B6B] to-[#E11D48] flex items-center justify-center text-white shadow-lg shadow-rose-500/25 group-hover:scale-105 transition-transform">
-            <Radio className="w-5 h-5 animate-pulse" />
-          </div>
+          <img
+            src="/logo-icon.png"
+            alt="Stream Allow Logo"
+            className="w-10 h-10 rounded-xl shadow-lg shadow-rose-500/25 group-hover:scale-105 transition-transform object-contain"
+          />
           <div className="flex flex-col">
             <span className="text-xl font-extrabold tracking-tight text-white flex items-center gap-1.5">
-              Stream <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF1B6B] to-[#FF5E8E]">Join</span>
+              Stream <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF1B6B] to-[#FF5E8E]">Allow</span>
             </span>
             <span className="text-[10px] text-slate-400 font-medium tracking-wider uppercase -mt-1">
               YouTube Automation SaaS

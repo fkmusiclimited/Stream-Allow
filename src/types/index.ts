@@ -15,7 +15,7 @@ export interface User {
   role: UserRole;
   avatar: string;
   plan: 'Basic' | 'Pro' | 'Business';
-  status: 'Active' | 'Suspended' | 'Pending';
+  status: 'Active' | 'Inactive' | 'Suspended' | 'Pending';
   joinedDate: string;
   channelsCount: number;
   totalViews: string;
@@ -24,8 +24,11 @@ export interface User {
   password?: string;
   usedStorageGB?: number;
   maxStorageGB?: number;
+  subscriptionStartDate?: string;
+  planDurationDays?: number;
   renewalDate?: string;
   renewalDaysLeft?: number;
+  expiresAt?: string;
 }
 
 export type StreamStatus = 'live' | 'scheduled' | 'ended' | 'failed';
@@ -50,6 +53,10 @@ export interface StreamItem {
   resolution?: string;
   bitrate?: string;
   loop?: boolean;
+  startedAt?: string | null;
+  currentTrackIndex?: number;
+  currentTrackStartedAt?: string;
+  totalTracks?: number;
 }
 
 export interface PlaylistItem {
@@ -79,6 +86,7 @@ export interface PlaylistItem {
 
 export interface YouTubeChannel {
   id: string;
+  userId?: string;
   name: string;
   handle: string;
   subscribers: string;
@@ -114,8 +122,28 @@ export interface Transaction {
   amountBDT: number;
   status: 'Paid' | 'Pending' | 'Failed' | 'Refunded';
   date: string;
-  paymentMethod: 'bKash' | 'Nagad' | 'Rocket' | 'Credit Card' | 'Stripe' | 'SSLCommerz';
+  paymentMethod: 'bKash' | 'Nagad' | 'Rocket' | 'Credit Card' | 'Stripe' | 'SSLCommerz' | 'QR Code';
   invoiceNumber: string;
+  transactionId?: string;
+  submittedAt?: string;
+}
+
+export interface PaymentGatewaySettings {
+  bkashNumber: string;
+  bkashType: 'Merchant' | 'Personal' | 'Send Money';
+  bkashQrUrl: string;
+  bkashInstructions: string[];
+  nagadNumber: string;
+  nagadType: 'Merchant' | 'Personal' | 'Send Money';
+  nagadQrUrl: string;
+  nagadInstructions: string[];
+  qrCodeImageUrl: string;
+  qrCodeInstructions: string[];
+  verificationNotice: string;
+  stripePublicKey: string;
+  stripeEnabled: boolean;
+  bkashEnabled: boolean;
+  nagadEnabled: boolean;
 }
 
 export interface StaffMember {
@@ -206,4 +234,16 @@ export interface SystemSettingsData {
   smtpUser: string;
   smtpSenderName: string;
   storageProvider: 'local' | 's3' | 'google_cloud';
+}
+
+export interface HomepageDemoConfig {
+  title: string;
+  channelName: string;
+  viewersText: string;
+  videoUrl: string;
+  thumbnailUrl: string;
+  videoSourceType: 'uploaded' | 'url';
+  resolution: string;
+  bitrate: string;
+  updatedAt?: string;
 }

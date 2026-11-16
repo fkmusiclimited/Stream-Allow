@@ -26,7 +26,7 @@ export const HelpCenterPage: React.FC = () => {
       desc: 'First time setup, quickstart guide, and account verification.',
       articles: [
         'How to create your first 24/7 YouTube live stream in 3 minutes',
-        'Understanding Stream Join cloud architecture and RTMP routing',
+        'Understanding Stream Allow cloud architecture and RTMP routing',
         'Inviting team members and assigning channel roles',
         'System requirements and mobile dashboard access'
       ]
@@ -55,7 +55,7 @@ export const HelpCenterPage: React.FC = () => {
       articles: [
         'How to enable 24-hour live streaming on YouTube',
         'Resolving Google OAuth permissions mismatches',
-        'Connecting multiple brand accounts to one Stream Join dashboard',
+        'Connecting multiple brand accounts to one Stream Allow dashboard',
         'YouTube Studio RTMP latency settings: Ultra-low vs Low'
       ]
     },

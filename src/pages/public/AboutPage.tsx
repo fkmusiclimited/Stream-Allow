@@ -17,7 +17,7 @@ export const AboutPage: React.FC = () => {
             We Help Creators Go Live Easily and Grow Faster
           </h1>
           <p className="text-slate-300 text-base sm:text-lg leading-relaxed">
-            Stream Join is a modern platform designed for YouTube creators, music labels, radio stations, and businesses to manage and grow their live streams easily. Our mission is to make live streaming simple, powerful and accessible to everyone.
+            Stream Allow is a modern platform designed for YouTube creators, music labels, radio stations, and businesses to manage and grow their live streams easily. Our mission is to make live streaming simple, powerful and accessible to everyone.
           </p>
           <div className="flex items-center gap-4 pt-2">
             <button
@@ -40,7 +40,7 @@ export const AboutPage: React.FC = () => {
           <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-2xl p-1 bg-gradient-to-b from-slate-700/50 to-slate-900">
             <img
               src="https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?w=800&auto=format&fit=crop&q=80"
-              alt="Stream Join Creator Workstation"
+              alt="Stream Allow Creator Workstation"
               className="rounded-xl w-full h-[360px] object-cover filter brightness-90"
             />
             <div className="absolute bottom-4 left-4 right-4 p-4 rounded-xl bg-slate-950/80 backdrop-blur border border-white/10 text-xs text-slate-200">

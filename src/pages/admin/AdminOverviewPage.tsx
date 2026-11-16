@@ -11,7 +11,8 @@ import {
   Activity,
   ArrowRight,
   ShieldCheck,
-  Calendar
+  Calendar,
+  Tv
 } from 'lucide-react';
 
 export const AdminOverviewPage: React.FC = () => {
@@ -30,9 +31,19 @@ export const AdminOverviewPage: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300">
-          <Calendar className="w-4 h-4 text-[#FF1B6B]" />
-          <span>Oct 30, 2026</span>
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={() => navigate('admin/demo-video')}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#FF1B6B] to-[#FF4585] text-xs font-bold text-white shadow-md shadow-rose-600/30 hover:opacity-95 transition-all cursor-pointer"
+          >
+            <Tv className="w-3.5 h-3.5" />
+            <span>Homepage Demo Video</span>
+          </button>
+
+          <div className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300">
+            <Calendar className="w-4 h-4 text-[#FF1B6B]" />
+            <span>Oct 30, 2026</span>
+          </div>
         </div>
       </div>
 

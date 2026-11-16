@@ -22,7 +22,8 @@ import {
   ChevronDown,
   Menu,
   X,
-  UserCheck
+  UserCheck,
+  Tv
 } from 'lucide-react';
 
 interface AdminLayoutProps {
@@ -52,13 +53,13 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     { label: 'Users', path: 'admin/users', icon: Users },
     { label: 'Streams', path: 'admin/streams', icon: Video },
     { label: 'YouTube Channels', path: 'admin/youtube', icon: Youtube },
-    { label: 'Playlists', path: 'admin/playlists', icon: ListVideo },
     { label: 'Channel Permissions', path: 'admin/channel-permissions', icon: ShieldCheck },
     { label: 'Subscriptions', path: 'admin/subscriptions', icon: CreditCard },
     { label: 'Payments', path: 'admin/payments', icon: Receipt },
     { label: 'Staff & Roles', path: 'admin/staff', icon: ShieldCheck },
     { label: 'Support', path: 'admin/support', icon: Headphones },
     { label: 'Website', path: 'admin/website', icon: Globe },
+    { label: 'Demo Video', path: 'admin/demo-video', icon: Tv },
     { label: 'SEO', path: 'admin/seo', icon: Search },
     { label: 'Marketing', path: 'admin/marketing', icon: Megaphone },
     { label: 'Analytics', path: 'admin/reports', icon: BarChart3 },
@@ -81,12 +82,14 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           onClick={() => navigate('public/home')}
           className="p-5 border-b border-slate-800 flex items-center gap-3 cursor-pointer group"
         >
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#FF1B6B] to-[#E11D48] flex items-center justify-center text-white shadow-lg shadow-rose-500/20 group-hover:scale-105 transition-transform">
-            <Radio className="w-5 h-5 animate-pulse" />
-          </div>
+          <img
+            src="/logo-icon.png"
+            alt="Stream Allow Logo"
+            className="w-9 h-9 rounded-xl shadow-lg shadow-rose-500/20 group-hover:scale-105 transition-transform object-contain"
+          />
           <div>
             <span className="text-lg font-extrabold tracking-tight text-white flex items-center gap-1">
-              Stream <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF1B6B] to-[#FF4585]">Join</span>
+              Stream <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF1B6B] to-[#FF4585]">Allow</span>
             </span>
             <div className="flex items-center gap-1.5 -mt-1">
               <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
@@ -183,7 +186,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 <div className="absolute right-0 mt-2 w-52 bg-[#111827] border border-slate-800 rounded-xl shadow-2xl p-2 z-50 text-xs space-y-1">
                   <div className="p-2 border-b border-slate-800">
                     <p className="font-bold text-white">Super Administrator</p>
-                    <p className="text-slate-400 text-[11px]">admin@streamjoin.com</p>
+                    <p className="text-slate-400 text-[11px]">{currentUser?.email || 'admin@streamallow.com'}</p>
                   </div>
                   <button
                     onClick={() => { navigate('admin/settings'); setProfileDropdownOpen(false); }}

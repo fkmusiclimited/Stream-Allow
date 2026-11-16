@@ -48,7 +48,13 @@ export const UserPlaylistPage: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {(userPlaylists || []).map((pl) => {
-            const isPlaylistLive = (userStreams || []).some(s => s.playlistId === pl.id && s.status === 'live');
+            const isPlaylistLive = (userStreams || []).some(s => (s.playlistId === pl.id || s.id === pl.id) && s.status === 'live');
+            const DEFAULT_DEMO_THUMBNAIL = 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80';
+            const hasVideos = (pl.videos && pl.videos.length > 0) || (pl.videosCount && pl.videosCount > 0);
+            const firstVideoCover = pl.videos?.[0]?.thumbnail || (pl.videos?.[0] as any)?.thumbnailUrl;
+            const playlistCover = hasVideos
+              ? (firstVideoCover || pl.thumbnail || DEFAULT_DEMO_THUMBNAIL)
+              : DEFAULT_DEMO_THUMBNAIL;
 
             return (
               <div
@@ -63,11 +69,14 @@ export const UserPlaylistPage: React.FC = () => {
                   {/* Click to open dedicated page */}
                   <div
                     onClick={() => openPlaylistDetails(pl.id)}
-                    className="relative h-44 overflow-hidden cursor-pointer"
+                    className="relative h-44 overflow-hidden cursor-pointer bg-slate-950"
                   >
                     <img
-                      src={pl.videos?.[0]?.thumbnail || pl.thumbnail}
+                      src={playlistCover}
                       alt={pl.name}
+                      onError={(e) => {
+                        e.currentTarget.src = DEFAULT_DEMO_THUMBNAIL;
+                      }}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />

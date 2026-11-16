@@ -38,6 +38,7 @@ export const UserLayout: React.FC<UserLayoutProps> = ({ children }) => {
     adminImpersonatorUser,
     exitImpersonation,
     isUserPlanActive,
+    openCheckoutModal,
     currency,
     setCurrency,
     notifications,
@@ -55,7 +56,6 @@ export const UserLayout: React.FC<UserLayoutProps> = ({ children }) => {
     { label: 'Dashboard', path: 'user/dashboard', icon: LayoutDashboard },
     { label: 'Create Stream', path: 'user/create-stream', icon: PlusCircle, isCta: true },
     { label: 'My Streams', path: 'user/my-streams', icon: Video },
-    { label: 'Playlist', path: 'user/playlist', icon: ListVideo },
     { label: 'Analytics', path: 'user/analytics', icon: BarChart3 },
     { label: 'Subscription', path: 'user/subscription', icon: CreditCard },
     { label: 'Payments', path: 'user/payment-history', icon: Receipt },
@@ -82,12 +82,14 @@ export const UserLayout: React.FC<UserLayoutProps> = ({ children }) => {
           onClick={() => navigate('public/home')}
           className="p-5 border-b border-slate-800 flex items-center gap-3 cursor-pointer group"
         >
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#FF1B6B] to-[#E11D48] flex items-center justify-center text-white shadow-lg shadow-rose-500/20 group-hover:scale-105 transition-transform">
-            <Radio className="w-5 h-5 animate-pulse" />
-          </div>
+          <img
+            src="/logo-icon.png"
+            alt="Stream Allow Logo"
+            className="w-9 h-9 rounded-xl shadow-lg shadow-rose-500/20 group-hover:scale-105 transition-transform object-contain"
+          />
           <div>
             <span className="text-lg font-extrabold tracking-tight text-white flex items-center gap-1">
-              Stream <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF1B6B] to-[#FF4585]">Join</span>
+              Stream <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF1B6B] to-[#FF4585]">Allow</span>
             </span>
             <span className="text-[10px] text-slate-400 block -mt-1 font-medium">User Dashboard</span>
           </div>
@@ -134,20 +136,40 @@ export const UserLayout: React.FC<UserLayoutProps> = ({ children }) => {
           <div className="flex items-center justify-between text-[11px]">
             <span className="text-slate-400">Current Plan</span>
             {isUserPlanActive ? (
-              <span className="text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
-                Active
-              </span>
+              <button
+                type="button"
+                onClick={() => navigate('user/subscription')}
+                className="text-emerald-400 hover:text-emerald-300 font-bold bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2 py-0.5 rounded cursor-pointer transition-all flex items-center gap-1 shadow-sm group"
+                title="Click to view subscription"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span>Active</span>
+              </button>
             ) : (
-              <span className="text-rose-400 font-bold bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded animate-pulse">
-                Inactive
-              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  navigate('user/subscription');
+                  openCheckoutModal(currentUser?.plan?.toLowerCase() as any);
+                }}
+                className="text-amber-400 hover:text-amber-300 font-bold bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 px-2 py-0.5 rounded cursor-pointer transition-all flex items-center gap-1 shadow-sm animate-pulse group"
+                title="Click to activate subscription"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                <span>Inactive</span>
+              </button>
             )}
           </div>
           <div className="font-bold text-white text-sm">
             {currentUser?.plan || 'Basic'} Plan
           </div>
           <button
-            onClick={() => navigate('user/subscription')}
+            onClick={() => {
+              navigate('user/subscription');
+              if (!isUserPlanActive) {
+                openCheckoutModal(currentUser?.plan?.toLowerCase() as any);
+              }
+            }}
             className={`w-full py-1.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
               isUserPlanActive
                 ? 'bg-slate-800 hover:bg-slate-700 text-slate-200'
@@ -363,10 +385,12 @@ export const UserLayout: React.FC<UserLayoutProps> = ({ children }) => {
             <div className="relative w-64 max-w-xs bg-[#0D121F] border-r border-slate-800 h-full flex flex-col p-4 z-50">
               <div className="flex items-center justify-between pb-4 border-b border-slate-800">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-[#FF1B6B] flex items-center justify-center text-white">
-                    <Radio className="w-4 h-4" />
-                  </div>
-                  <span className="font-extrabold text-white text-base">Stream Join</span>
+                  <img
+                    src="/logo-icon.png"
+                    alt="Stream Allow Logo"
+                    className="w-8 h-8 rounded-lg object-contain shadow-md shadow-rose-500/20"
+                  />
+                  <span className="font-extrabold text-white text-base">Stream Allow</span>
                 </div>
                 <button onClick={() => setSidebarOpen(false)} className="text-slate-400 hover:text-white">
                   <X className="w-5 h-5" />

@@ -103,7 +103,7 @@ export const BlogPage: React.FC = () => {
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-[#111827]">
               <div className="flex items-center gap-2 text-xs text-slate-400">
                 <BookOpen className="w-4 h-4 text-[#FF1B6B]" />
-                <span>Stream Join Knowledge Base</span>
+                <span>Stream Allow Knowledge Base</span>
               </div>
               <button
                 onClick={() => setReadingPost(null)}

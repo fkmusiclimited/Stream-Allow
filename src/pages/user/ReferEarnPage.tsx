@@ -13,7 +13,7 @@ import {
 
 export const ReferEarnPage: React.FC = () => {
   const { currentUser, formatPrice, showToast } = useApp();
-  const referralLink = `https://streamjoin.com/ref/${currentUser?.name.toLowerCase().replace(/\s+/g, '') || 'fahim123'}`;
+  const referralLink = `https://streamallow.com/ref/${currentUser?.name.toLowerCase().replace(/\s+/g, '') || 'fahim123'}`;
 
   const handleCopy = () => {
     navigator.clipboard?.writeText(referralLink);

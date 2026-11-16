@@ -19,6 +19,36 @@ import {
 } from 'lucide-react';
 import { User } from '../../types';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function getUserSubscriptionMetrics(u: User, nowMs: number) {
+  const expiryMs = u.expiresAt ? new Date(u.expiresAt).getTime() : NaN;
+  const hasValidExpiry = !Number.isNaN(expiryMs);
+  const isDateExpired = hasValidExpiry ? expiryMs <= nowMs : false;
+
+  let daysLeft = 0;
+  if (u.status === 'Inactive' || u.status === 'Suspended' || u.status === 'Pending' || isDateExpired) {
+    daysLeft = 0;
+  } else if (hasValidExpiry) {
+    daysLeft = Math.max(0, Math.ceil((expiryMs - nowMs) / DAY_MS));
+  } else if (typeof u.renewalDaysLeft === 'number') {
+    daysLeft = Math.max(0, u.renewalDaysLeft);
+  }
+
+  const isExpired = daysLeft <= 0 || u.status === 'Suspended' || u.status === 'Pending' || u.status === 'Inactive' || isDateExpired;
+  const isPlanActive = !isExpired && u.status === 'Active';
+
+  const formattedExpiryDate = hasValidExpiry
+    ? new Date(expiryMs).toLocaleDateString('en-US', {
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric'
+      })
+    : (u.renewalDate || (isPlanActive ? 'Active' : 'Expired'));
+
+  return { daysLeft, isExpired, isPlanActive, formattedExpiryDate };
+}
+
 export const UserManagementPage: React.FC = () => {
   const { users, fetchUsers, addUser, updateUserStatus, renewUserPlan, expireUserPlan, impersonateUser, showToast } = useApp();
   const [search, setSearch] = useState('');
@@ -26,15 +56,19 @@ export const UserManagementPage: React.FC = () => {
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [actionMenuId, setActionMenuId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
-  // Sync users from PostgreSQL database on component load
+  // Sync users from PostgreSQL database on component load and keep countdown live
   React.useEffect(() => {
     fetchUsers();
+    const timer = setInterval(() => setNowMs(Date.now()), 60000);
+    return () => clearInterval(timer);
   }, []);
 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
     await fetchUsers();
+    setNowMs(Date.now());
     setIsRefreshing(false);
     showToast('User list synced with PostgreSQL database!', 'info');
   };
@@ -45,20 +79,12 @@ export const UserManagementPage: React.FC = () => {
   const [newPlan, setNewPlan] = useState<'Basic' | 'Pro' | 'Business'>('Pro');
 
   // Count active vs expired plans across platform
-  const activePlanCount = users.filter(u => {
-    const days = u.renewalDaysLeft !== undefined ? u.renewalDaysLeft : 24;
-    return days > 0 && u.status === 'Active';
-  }).length;
+  const activePlanCount = users.filter(u => getUserSubscriptionMetrics(u, nowMs).isPlanActive).length;
 
-  const expiredPlanCount = users.filter(u => {
-    const days = u.renewalDaysLeft !== undefined ? u.renewalDaysLeft : 24;
-    return days <= 0 || u.status === 'Suspended' || u.status === 'Pending';
-  }).length;
+  const expiredPlanCount = users.filter(u => getUserSubscriptionMetrics(u, nowMs).isExpired).length;
 
   const filteredUsers = users.filter(u => {
-    const daysLeft = u.renewalDaysLeft !== undefined ? u.renewalDaysLeft : 24;
-    const isExpired = daysLeft <= 0 || u.status === 'Suspended' || u.status === 'Pending';
-    const isPlanActive = !isExpired && u.status === 'Active';
+    const { isExpired, isPlanActive } = getUserSubscriptionMetrics(u, nowMs);
 
     let matchesPlan = true;
     if (planFilter === 'Plan Active') {
@@ -69,10 +95,20 @@ export const UserManagementPage: React.FC = () => {
       matchesPlan = u.plan === planFilter;
     }
 
-    const matchesSearch = u.name.toLowerCase().includes(search.toLowerCase()) ||
-      u.email.toLowerCase().includes(search.toLowerCase());
+    const q = search.toLowerCase();
+    const matchesSearch = (u.name || '').toLowerCase().includes(q) ||
+      (u.email || '').toLowerCase().includes(q);
     return matchesPlan && matchesSearch;
   });
+
+  const uniqueUsers = React.useMemo(() => {
+    const seen = new Set<string>();
+    return filteredUsers.filter(u => {
+      if (!u || !u.id || seen.has(u.id)) return false;
+      seen.add(u.id);
+      return true;
+    });
+  }, [filteredUsers]);
 
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,8 +124,7 @@ export const UserManagementPage: React.FC = () => {
       status: 'Active',
       usedStorageGB: 0.0,
       maxStorageGB: maxGB,
-      renewalDate: 'Nov 30, 2026',
-      renewalDaysLeft: 30
+      planDurationDays: 30
     });
     setAddModalOpen(false);
     setNewName('');
@@ -190,13 +225,11 @@ export const UserManagementPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {filteredUsers.map((u, idx) => {
-                const daysLeft = u.renewalDaysLeft !== undefined ? u.renewalDaysLeft : 24;
-                const isExpired = daysLeft <= 0 || u.status === 'Suspended' || u.status === 'Pending';
-                const isPlanActive = !isExpired && u.status === 'Active';
+              {uniqueUsers.map((u, idx) => {
+                const { daysLeft, isExpired, isPlanActive, formattedExpiryDate } = getUserSubscriptionMetrics(u, nowMs);
 
                 return (
-                  <tr key={u.id} className="hover:bg-slate-900/40 transition-colors">
+                  <tr key={`usr-item-${u.id}-${idx}`} className="hover:bg-slate-900/40 transition-colors">
                     <td className="py-3 px-4 font-mono text-slate-500">{idx + 1}</td>
 
                     <td className="py-3 px-4">
@@ -271,9 +304,14 @@ export const UserManagementPage: React.FC = () => {
 
                         if (isWarning) {
                           return (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                              <Clock className="w-3 h-3 text-amber-400 shrink-0" />
-                              <span>{daysLeft} days left</span>
+                            <div className="space-y-0.5">
+                              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                <Clock className="w-3 h-3 text-amber-400 shrink-0" />
+                                <span>{daysLeft} days left</span>
+                              </div>
+                              <div className="text-[10px] text-slate-500 font-mono">
+                                {formattedExpiryDate}
+                              </div>
                             </div>
                           );
                         }
@@ -285,7 +323,7 @@ export const UserManagementPage: React.FC = () => {
                               <span>{daysLeft} days left</span>
                             </div>
                             <div className="text-[10px] text-slate-500 font-mono">
-                              {u.renewalDate || 'Nov 30, 2026'}
+                              {formattedExpiryDate}
                             </div>
                           </div>
                         );
