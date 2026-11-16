@@ -1,10 +1,20 @@
 import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { PGlite } from '@electric-sql/pglite';
 import { encryptStreamKey } from '../utils/crypto';
 import bcrypt from 'bcryptjs';
+import {
+  introspectDatabaseSchema,
+  getStreamTableName,
+  hasTable,
+  isUuidColumn,
+  resolveStreamStatusForDb,
+  resolvePlaylistStatusForDb,
+  buildCompatibleInsert
+} from './schemaCompat';
 
 const { Pool } = pg;
 
@@ -254,11 +264,46 @@ export async function initDatabaseConnection(): Promise<boolean> {
       isDatabaseConnected = true;
 
       try {
-        if (schemaSql) {
+        // Inspect existing tables first so we never blindly alter production DB
+        const existingTblRes = await client.query<{ table_name: string }>(
+          `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
+        );
+        const existingTables = new Set(existingTblRes.rows.map(r => r.table_name));
+
+        if (existingTables.size === 0 && schemaSql) {
+          // Completely empty external database: bootstrap initial schema
           await client.query(schemaSql);
+        } else if (schemaSql) {
+          // Only create missing tables (skip live_streams if streams already exists)
+          const statements = schemaSql
+            .split(/;\s*\n/)
+            .map(s => s.trim())
+            .filter(Boolean);
+          for (const stmt of statements) {
+            const createMatch = stmt.match(/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-zA-Z0-9_]+)/i);
+            if (createMatch) {
+              const tbl = createMatch[1].toLowerCase();
+              if (existingTables.has(tbl)) continue;
+              if (tbl === 'live_streams' && existingTables.has('streams')) continue;
+              await client.query(stmt + ';').catch(() => {});
+            } else {
+              const idxMatch = stmt.match(/^CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+[a-zA-Z0-9_]+\s+ON\s+([a-zA-Z0-9_]+)/i);
+              if (idxMatch) {
+                const tbl = idxMatch[1].toLowerCase();
+                if (!existingTables.has(tbl)) continue;
+                await client.query(stmt + ';').catch(() => {});
+              }
+            }
+          }
         }
-        await applyCompatibilityMigrations(client);
-        await seedInitialDataIfEmpty(client);
+
+        await introspectDatabaseSchema(async <T = any>(text: string, params?: any[]) => {
+          const r = await client.query(text, params);
+          return { rows: r.rows as T[], rowCount: r.rowCount ?? r.rows.length };
+        });
+
+        await applyCompatibilityMigrations(client, true);
+        await seedInitialDataIfEmpty(client, true);
       } catch (err: any) {
         console.warn('[PostgreSQL] External schema initialization notice:', err.message);
       } finally {
@@ -299,7 +344,7 @@ export async function initDatabaseConnection(): Promise<boolean> {
         }
       }
       try {
-        await db.query("SELECT 1 FROM playlists WHERE user_id = 'test' LIMIT 1;");
+        await db.query('SELECT 1 FROM playlists LIMIT 1;');
       } catch (idxErr: any) {
         if (idxErr?.message?.includes('corrupted') || idxErr?.message?.includes('could not read block')) {
           throw idxErr;
@@ -341,13 +386,13 @@ export async function initDatabaseConnection(): Promise<boolean> {
     isDatabaseConnected = true;
     isUsingExternalPg = false;
 
-    // Apply schema DDL
+    // Apply schema DDL for embedded PostgreSQL cluster
     if (schemaSql) {
       await pgliteInstance.exec(schemaSql);
     }
 
-    // Run column compatibility migrations
-    await applyCompatibilityMigrations(null);
+    // Run column compatibility migrations on embedded cluster
+    await applyCompatibilityMigrations(null, false);
 
     // Check whether database is empty (fresh cluster or recovered) and restore snapshot first
     let existingUserCount = 0;
@@ -360,8 +405,13 @@ export async function initDatabaseConnection(): Promise<boolean> {
       await restoreFromDbSnapshot(pgliteInstance);
     }
 
+    await introspectDatabaseSchema(async <T = any>(text: string, params?: any[]) => {
+      const r = await pgliteInstance!.query<T>(text, params);
+      return { rows: r.rows as T[], rowCount: r.rows.length };
+    });
+
     // Seed initial records only if missing
-    await seedInitialDataIfEmpty(null);
+    await seedInitialDataIfEmpty(null, false);
 
     // Flush checkpoint and write fresh snapshot
     try {
@@ -424,9 +474,43 @@ export async function closeDatabaseConnection(): Promise<void> {
 }
 
 /**
- * Applies backwards-compatible schema column additions to existing tables
+ * Applies backwards-compatible schema column additions only for embedded PGlite
+ * (or ensures homepage_demo_config exists). Never blindly alters production tables.
  */
-async function applyCompatibilityMigrations(pgClient: pg.PoolClient | null) {
+async function applyCompatibilityMigrations(pgClient: pg.PoolClient | null, externalPg: boolean) {
+  if (externalPg) {
+    // Only ensure auxiliary homepage_demo_config exists if missing; never ALTER existing production tables.
+    if (pgClient && !hasTable('homepage_demo_config')) {
+      const auxiliaryStatements = [
+        `CREATE TABLE IF NOT EXISTS homepage_demo_config (
+          id VARCHAR(50) PRIMARY KEY DEFAULT 'default',
+          title VARCHAR(255) NOT NULL DEFAULT 'Relaxing LoFi Music 24/7',
+          channel_name VARCHAR(255) NOT NULL DEFAULT 'Music World',
+          viewers_text VARCHAR(100) NOT NULL DEFAULT '1.2K watching',
+          video_url TEXT NOT NULL DEFAULT '/uploads/media/video-Music_video_animating_storyboard____1080-1793964845416-990953612.mp4',
+          thumbnail_url TEXT NOT NULL DEFAULT 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=900&auto=format&fit=crop&q=80',
+          video_source_type VARCHAR(50) NOT NULL DEFAULT 'uploaded',
+          resolution VARCHAR(50) NOT NULL DEFAULT '1080p · 60 FPS',
+          bitrate VARCHAR(50) NOT NULL DEFAULT '4,500 kbps',
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`,
+        `INSERT INTO homepage_demo_config (id, title, channel_name, viewers_text, video_url, thumbnail_url, video_source_type, resolution, bitrate)
+         VALUES ('default', 'Relaxing LoFi Music 24/7', 'Music World', '1.2K watching', '/uploads/media/video-Music_video_animating_storyboard____1080-1793964845416-990953612.mp4', 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=900&auto=format&fit=crop&q=80', 'uploaded', '1080p · 60 FPS', '4,500 kbps')
+         ON CONFLICT (id) DO NOTHING;`
+      ];
+      for (const stmt of auxiliaryStatements) {
+        try {
+          await pgClient.query(stmt);
+        } catch {}
+      }
+      await introspectDatabaseSchema(async (text, params) => {
+        const r = await pgClient.query(text, params);
+        return { rows: r.rows, rowCount: r.rowCount ?? r.rows.length };
+      });
+    }
+    return;
+  }
+
   const migrations = [
     'ALTER TABLE uploaded_media ADD COLUMN IF NOT EXISTS file_url TEXT;',
     'ALTER TABLE playlists ADD COLUMN IF NOT EXISTS total_runtime_seconds INT DEFAULT 0;',
@@ -479,119 +563,230 @@ async function applyCompatibilityMigrations(pgClient: pg.PoolClient | null) {
 
 /**
  * Seeds initial users, playlists, and streams ONLY if the users table is completely empty.
- * If data already exists, this function leaves it 100% untouched to guarantee persistence across restarts.
+ * If data already exists, leaves existing records and authentication untouched.
  */
-async function seedInitialDataIfEmpty(pgClient: pg.PoolClient | null) {
+async function seedInitialDataIfEmpty(pgClient: pg.PoolClient | null, externalPg: boolean) {
   try {
-    const salt = await bcrypt.genSalt(10);
-    const adminHash = await bcrypt.hash('admin1234', salt);
-    const userHash = await bcrypt.hash('user1234', salt);
+    const runSeedQuery = async (sql: string, params?: any[]) => {
+      if (pgClient) return pgClient.query(sql, params);
+      return pgliteInstance!.query(sql, params);
+    };
 
-    const accountsToEnsure = [
-      {
-        sql: `INSERT INTO users (id, name, email, password_hash, role, plan, status, joined_date, created_at, updated_at)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-              ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, status = 'Active';`,
-        params: ['u_admin_system', 'Super Admin', 'admin@streamallow.com', adminHash, 'super_admin', 'Business', 'Active', 'Oct 01, 2026']
-      },
-      {
-        sql: `INSERT INTO users (id, name, email, password_hash, role, plan, status, joined_date, created_at, updated_at)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-              ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, status = 'Active';`,
-        params: ['u_demo_creator', 'Demo Creator', 'user@streamallow.com', userHash, 'user', 'Pro', 'Active', 'Nov 01, 2026']
-      },
-      {
-        sql: `INSERT INTO users (id, name, email, password_hash, role, plan, status, joined_date, created_at, updated_at)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-              ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, status = 'Active';`,
-        params: ['u_fahim_creator', 'Fahim Ahmed', 'fahim@gmail.com', userHash, 'user', 'Pro', 'Active', 'Oct 30, 2026']
-      },
-      {
-        sql: `INSERT INTO activity_logs (id, user_name, action, category, ip_address, created_at)
-              VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
-              ON CONFLICT (id) DO NOTHING;`,
-        params: ['log-1', 'Admin', 'PostgreSQL Database Engine Online & Migrated', 'system', '127.0.0.1']
-      }
-    ];
-
-    for (const q of accountsToEnsure) {
-      if (pgClient) {
-        await pgClient.query(q.sql, q.params);
-      } else if (pgliteInstance) {
-        await pgliteInstance.query(q.sql, q.params);
-      }
-    }
-
-    // Backfill subscription_start_date, plan_duration_days, and expires_at from genuine DB timestamps only when missing
-    const subscriptionBackfillSql = [
-      'UPDATE users SET plan_duration_days = 30 WHERE plan_duration_days IS NULL OR plan_duration_days <= 0;',
-      `UPDATE users
-       SET subscription_start_date = COALESCE(expires_at - (COALESCE(plan_duration_days, 30) * INTERVAL '1 day'), created_at, CURRENT_TIMESTAMP)
-       WHERE subscription_start_date IS NULL;`,
-      `UPDATE users
-       SET expires_at = subscription_start_date + (COALESCE(plan_duration_days, 30) * INTERVAL '1 day')
-       WHERE expires_at IS NULL AND status = 'Active' AND subscription_start_date IS NOT NULL;`,
-      `UPDATE users
-       SET renewal_days_left = GREATEST(0, CEIL(EXTRACT(EPOCH FROM (expires_at - CURRENT_TIMESTAMP)) / 86400.0)::int),
-           renewal_date = to_char(expires_at AT TIME ZONE 'UTC', 'Mon DD, YYYY')
-       WHERE expires_at IS NOT NULL AND status = 'Active' AND (renewal_date IS NULL OR renewal_date = '');`
-    ];
-    for (const sql of subscriptionBackfillSql) {
-      try {
-        if (pgClient) {
-          await pgClient.query(sql);
-        } else if (pgliteInstance) {
-          await pgliteInstance.exec(sql);
-        }
-      } catch {}
-    }
-
-    // Ensure standard sample playlist and live stream exist if table is empty
+    let existingUsers = 0;
     try {
-      const plCountQuery = 'SELECT COUNT(*)::int as count FROM playlists';
-      const plCountRes = pgClient ? await pgClient.query(plCountQuery) : await pgliteInstance!.query(plCountQuery);
-      if (parseInt((plCountRes.rows[0] as any)?.count || '0', 10) === 0) {
-        const defaultPlId = 'pl_default_247';
-        const defaultMediaId = 'med_lofi_beat_1';
-        const encKey = encryptStreamKey('live_247_test_stream_key');
+      const countRes = await runSeedQuery('SELECT COUNT(*)::int as count FROM users');
+      existingUsers = parseInt(String(countRes.rows[0]?.count || '0'), 10);
+    } catch {}
 
+    if (externalPg && existingUsers > 0) {
+      console.log(`[PostgreSQL] Preserving ${existingUsers} existing production user record(s) and authentication.`);
+      return;
+    }
+
+    const useUuidForUsers = isUuidColumn('users', 'id');
+    const adminUserId = useUuidForUsers ? crypto.randomUUID() : 'u_admin_system';
+    const demoUserId = useUuidForUsers ? crypto.randomUUID() : 'u_demo_creator';
+    const fahimUserId = useUuidForUsers ? crypto.randomUUID() : 'u_fahim_creator';
+
+    if (existingUsers === 0) {
+      const salt = await bcrypt.genSalt(10);
+      const adminHash = await bcrypt.hash('admin1234', salt);
+      const userHash = await bcrypt.hash('user1234', salt);
+
+      const accountsToEnsure = [
+        buildCompatibleInsert(
+          'users',
+          [
+            ['id', adminUserId],
+            ['name', 'Super Admin'],
+            ['email', 'admin@streamallow.com'],
+            ['password_hash', adminHash],
+            ['role', 'super_admin'],
+            ['plan', 'Business'],
+            ['status', 'Active'],
+            ['joined_date', 'Oct 01, 2026']
+          ],
+          { rawTimestampColumns: ['created_at', 'updated_at'], onConflict: 'ON CONFLICT (email) DO NOTHING' }
+        ),
+        buildCompatibleInsert(
+          'users',
+          [
+            ['id', demoUserId],
+            ['name', 'Demo Creator'],
+            ['email', 'user@streamallow.com'],
+            ['password_hash', userHash],
+            ['role', 'user'],
+            ['plan', 'Pro'],
+            ['status', 'Active'],
+            ['joined_date', 'Nov 01, 2026']
+          ],
+          { rawTimestampColumns: ['created_at', 'updated_at'], onConflict: 'ON CONFLICT (email) DO NOTHING' }
+        ),
+        buildCompatibleInsert(
+          'users',
+          [
+            ['id', fahimUserId],
+            ['name', 'Fahim Ahmed'],
+            ['email', 'fahim@gmail.com'],
+            ['password_hash', userHash],
+            ['role', 'user'],
+            ['plan', 'Pro'],
+            ['status', 'Active'],
+            ['joined_date', 'Oct 30, 2026']
+          ],
+          { rawTimestampColumns: ['created_at', 'updated_at'], onConflict: 'ON CONFLICT (email) DO NOTHING' }
+        ),
+        buildCompatibleInsert(
+          'activity_logs',
+          [
+            ['id', isUuidColumn('activity_logs', 'id') ? crypto.randomUUID() : 'log-1'],
+            ['user_name', 'Admin'],
+            ['action', 'PostgreSQL Database Engine Online & Migrated'],
+            ['category', 'system'],
+            ['ip_address', '127.0.0.1']
+          ],
+          { rawTimestampColumns: ['created_at'], onConflict: 'ON CONFLICT (id) DO NOTHING' }
+        )
+      ];
+
+      for (const q of accountsToEnsure) {
+        await runSeedQuery(q.sql, q.params);
+      }
+    }
+
+    // Backfill subscription_start_date, plan_duration_days, and expires_at only for embedded DB when missing
+    if (!externalPg) {
+      const subscriptionBackfillSql = [
+        'UPDATE users SET plan_duration_days = 30 WHERE plan_duration_days IS NULL OR plan_duration_days <= 0;',
+        `UPDATE users
+         SET subscription_start_date = COALESCE(expires_at - (COALESCE(plan_duration_days, 30) * INTERVAL '1 day'), created_at, CURRENT_TIMESTAMP)
+         WHERE subscription_start_date IS NULL;`,
+        `UPDATE users
+         SET expires_at = subscription_start_date + (COALESCE(plan_duration_days, 30) * INTERVAL '1 day')
+         WHERE expires_at IS NULL AND status = 'Active' AND subscription_start_date IS NOT NULL;`,
+        `UPDATE users
+         SET renewal_days_left = GREATEST(0, CEIL(EXTRACT(EPOCH FROM (expires_at - CURRENT_TIMESTAMP)) / 86400.0)::int),
+             renewal_date = to_char(expires_at AT TIME ZONE 'UTC', 'Mon DD, YYYY')
+         WHERE expires_at IS NOT NULL AND status = 'Active' AND (renewal_date IS NULL OR renewal_date = '');`
+      ];
+      for (const sql of subscriptionBackfillSql) {
+        try {
+          if (pgClient) {
+            await pgClient.query(sql);
+          } else if (pgliteInstance) {
+            await pgliteInstance.exec(sql);
+          }
+        } catch {}
+      }
+    }
+
+    // Ensure standard sample playlist and live stream exist if playlists table is empty
+    try {
+      const plCountRes = await runSeedQuery('SELECT COUNT(*)::int as count FROM playlists');
+      if (parseInt(String(plCountRes.rows[0]?.count || '0'), 10) === 0) {
+        const ownerRes = await runSeedQuery("SELECT id FROM users WHERE email = 'admin@streamallow.com' LIMIT 1");
+        const resolvedAdminId = ownerRes.rows[0]?.id || adminUserId;
+
+        const defaultPlId = isUuidColumn('playlists', 'id') ? crypto.randomUUID() : 'pl_default_247';
+        const defaultMediaId = isUuidColumn('uploaded_media', 'id') ? crypto.randomUUID() : 'med_lofi_beat_1';
+        const defaultPvId = isUuidColumn('playlist_videos', 'id') ? crypto.randomUUID() : 'pv_track_1';
+        const streamTable = getStreamTableName();
+        const defaultStreamId = isUuidColumn(streamTable, 'id') ? crypto.randomUUID() : 'str_live_master';
+
+        const encKey = encryptStreamKey('live_247_test_stream_key');
         const mediaPath = path.resolve(process.cwd(), 'uploads/media/video-Music_video_animating_storyboard____1080-1793964845416-990953612.mp4');
         const mediaUrl = '/uploads/media/video-Music_video_animating_storyboard____1080-1793964845416-990953612.mp4';
         const thumbUrl = '/uploads/thumbnails/thumb-video-Music_video_animating_storyboard____1080-1793964845416-990953612.jpg';
 
         const seedStatements = [
-          {
-            sql: `INSERT INTO playlists (id, user_id, name, description, status, is_live_loop, total_videos, total_runtime, total_runtime_seconds, thumbnail, thumbnail_url, created_at, updated_at)
-                  VALUES ($1, $2, $3, $4, 'Active', true, 1, '15:20', 920, $5, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                  ON CONFLICT (id) DO NOTHING;`,
-            params: [defaultPlId, 'u_admin_system', '24/7 Lo-Fi Beats & Chill Mix', 'Continuous 24/7 high bitrate broadcasting playlist for YouTube Live', thumbUrl]
-          },
-          {
-            sql: `INSERT INTO uploaded_media (id, user_id, file_name, original_name, file_path, url, file_url, duration_seconds, formatted_duration, resolution, format, file_size_bytes, thumbnail_url, created_at)
-                  VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, '1080p FHD', 'MP4', 52428800, $9, CURRENT_TIMESTAMP)
-                  ON CONFLICT (id) DO NOTHING;`,
-            params: [defaultMediaId, 'u_admin_system', 'Music_video_animating_storyboard.mp4', 'Lo-Fi Chill Beat Track 01.mp4', mediaPath, mediaUrl, 920, '15:20', thumbUrl]
-          },
-          {
-            sql: `INSERT INTO playlist_videos (id, playlist_id, user_id, media_id, title, url, file_url, file_path, storage_path, duration, formatted_duration, duration_seconds, thumbnail, thumbnail_url, position_order, created_at)
-                  VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $7, '15:20', '15:20', 920, $8, $8, 1, CURRENT_TIMESTAMP)
-                  ON CONFLICT (id) DO NOTHING;`,
-            params: ['pv_track_1', defaultPlId, 'u_admin_system', defaultMediaId, 'Lo-Fi Chill Beat Track 01 (1080p FHD)', mediaUrl, mediaPath, thumbUrl]
-          },
-          {
-            sql: `INSERT INTO live_streams (id, user_id, title, playlist_id, thumbnail, status, viewers, resolution, bitrate, stream_url, is_dual_stream, backup_rtmp_url, category, privacy, encrypted_key_cipher, encrypted_key_iv, encrypted_key_tag, created_at, updated_at)
-                  VALUES ($1, $2, $3, $4, $5, 'scheduled', 0, '1080p60', '4500 kbps', 'rtmp://a.rtmp.youtube.com/live2', false, '', 'Music', 'Public', $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                  ON CONFLICT (id) DO NOTHING;`,
-            params: ['str_live_master', 'u_admin_system', '24/7 Lo-Fi Chill Radio · Beats to Relax / Study to', defaultPlId, thumbUrl, encKey.cipherText, encKey.iv, encKey.authTag]
-          }
+          buildCompatibleInsert(
+            'playlists',
+            [
+              ['id', defaultPlId],
+              ['user_id', resolvedAdminId],
+              ['name', '24/7 Lo-Fi Beats & Chill Mix'],
+              ['description', 'Continuous 24/7 high bitrate broadcasting playlist for YouTube Live'],
+              ['status', resolvePlaylistStatusForDb('Active')],
+              ['is_live_loop', true],
+              ['total_videos', 1],
+              ['total_runtime', '15:20'],
+              ['total_runtime_seconds', 920],
+              ['thumbnail', thumbUrl],
+              ['thumbnail_url', thumbUrl]
+            ],
+            { rawTimestampColumns: ['created_at', 'updated_at'], onConflict: 'ON CONFLICT (id) DO NOTHING' }
+          ),
+          buildCompatibleInsert(
+            'uploaded_media',
+            [
+              ['id', defaultMediaId],
+              ['user_id', resolvedAdminId],
+              ['file_name', 'Music_video_animating_storyboard.mp4'],
+              ['original_name', 'Lo-Fi Chill Beat Track 01.mp4'],
+              ['file_path', mediaPath],
+              ['url', mediaUrl],
+              ['file_url', mediaUrl],
+              ['duration_seconds', 920],
+              ['formatted_duration', '15:20'],
+              ['resolution', '1080p FHD'],
+              ['format', 'MP4'],
+              ['file_size_bytes', 52428800],
+              ['thumbnail_url', thumbUrl]
+            ],
+            { rawTimestampColumns: ['created_at'], onConflict: 'ON CONFLICT (id) DO NOTHING' }
+          ),
+          buildCompatibleInsert(
+            'playlist_videos',
+            [
+              ['id', defaultPvId],
+              ['playlist_id', defaultPlId],
+              ['user_id', resolvedAdminId],
+              ['media_id', defaultMediaId],
+              ['title', 'Lo-Fi Chill Beat Track 01 (1080p FHD)'],
+              ['url', mediaUrl],
+              ['file_url', mediaUrl],
+              ['file_path', mediaPath],
+              ['storage_path', mediaPath],
+              ['duration', '15:20'],
+              ['formatted_duration', '15:20'],
+              ['duration_seconds', 920],
+              ['resolution', '1080p FHD'],
+              ['format', 'MP4'],
+              ['file_size_bytes', 52428800],
+              ['thumbnail', thumbUrl],
+              ['thumbnail_url', thumbUrl],
+              ['position_order', 1]
+            ],
+            { rawTimestampColumns: ['created_at'], onConflict: 'ON CONFLICT (id) DO NOTHING' }
+          ),
+          buildCompatibleInsert(
+            streamTable,
+            [
+              ['id', defaultStreamId],
+              ['user_id', resolvedAdminId],
+              ['title', '24/7 Lo-Fi Chill Radio · Beats to Relax / Study to'],
+              ['playlist_id', defaultPlId],
+              ['thumbnail', thumbUrl],
+              ['thumbnail_url', thumbUrl],
+              ['status', resolveStreamStatusForDb('scheduled', streamTable)],
+              ['viewers', 0],
+              ['resolution', '1080p60'],
+              ['bitrate', '4500 kbps'],
+              ['stream_url', 'rtmp://a.rtmp.youtube.com/live2'],
+              ['is_dual_stream', false],
+              ['backup_rtmp_url', ''],
+              ['category', 'Music'],
+              ['privacy', 'Public'],
+              ['encrypted_key_cipher', encKey.cipherText],
+              ['encrypted_key_iv', encKey.iv],
+              ['encrypted_key_tag', encKey.authTag]
+            ],
+            { rawTimestampColumns: ['created_at', 'updated_at'], onConflict: 'ON CONFLICT (id) DO NOTHING' }
+          )
         ];
 
         for (const st of seedStatements) {
-          if (pgClient) {
-            await pgClient.query(st.sql, st.params);
-          } else if (pgliteInstance) {
-            await pgliteInstance.query(st.sql, st.params);
-          }
+          await runSeedQuery(st.sql, st.params);
         }
         console.log('[PostgreSQL] Seeded initial playlist and master live stream with real media.');
       }

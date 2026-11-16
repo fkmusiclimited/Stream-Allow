@@ -1,10 +1,12 @@
-import { spawn, ChildProcess, execSync, execFileSync } from 'child_process';
+import { spawn, ChildProcess, execSync, execFileSync, execFile } from 'child_process';
+import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import net from 'net';
-import tls from 'tls';
 import { decryptStreamKey } from '../utils/crypto';
+
+const execFileAsync = promisify(execFile);
 
 export interface StreamConfig {
   streamId: string;
@@ -19,8 +21,10 @@ export interface StreamConfig {
   videoPaths?: string[]; // Array of video file paths on server in true playlist order
   initialTrackIndex?: number; // Starting index in videoPaths (0-based)
   resolution?: string;
+  bitrate?: string;
   videoBitrateKbps?: number;
   fps?: number;
+  loop?: boolean;
 }
 
 export interface StreamProcessStats {
@@ -41,6 +45,193 @@ export interface StreamProcessStats {
   totalTracks: number;
 }
 
+export interface ResolvedEncodingProfile {
+  width: number;
+  height: number;
+  fps: number;
+  bitrateKbps: number;
+  gop: number;
+}
+
+/**
+ * Parses resolution & bitrate settings (e.g. "1080p60", "720p", "6000 kbps")
+ * into YouTube Live compliant H.264/AAC parameters with 2-second keyframe interval.
+ */
+export function parseStreamEncodingProfile(
+  resolution?: string,
+  bitrateStr?: string,
+  fpsOverride?: number,
+  bitrateOverrideKbps?: number
+): ResolvedEncodingProfile {
+  const resLower = String(resolution || '1080p60').toLowerCase().trim();
+
+  let width = 1920;
+  let height = 1080;
+  if (resLower.includes('2160') || resLower.includes('4k')) {
+    width = 3840;
+    height = 2160;
+  } else if (resLower.includes('1440') || resLower.includes('2k')) {
+    width = 2560;
+    height = 1440;
+  } else if (resLower.includes('720')) {
+    width = 1280;
+    height = 720;
+  } else if (resLower.includes('480')) {
+    width = 854;
+    height = 480;
+  }
+
+  let fps = 30;
+  if (typeof fpsOverride === 'number' && fpsOverride >= 15 && fpsOverride <= 60) {
+    fps = Math.round(fpsOverride);
+  } else if (resLower.includes('60')) {
+    fps = 60;
+  }
+
+  let bitrateKbps = width >= 3840 ? 14000 : width >= 2560 ? 9000 : width >= 1920 ? (fps >= 60 ? 6000 : 4500) : (fps >= 60 ? 4000 : 3000);
+  if (typeof bitrateOverrideKbps === 'number' && Number.isFinite(bitrateOverrideKbps) && bitrateOverrideKbps > 0) {
+    bitrateKbps = Math.round(bitrateOverrideKbps);
+  } else if (bitrateStr) {
+    const cleaned = bitrateStr.replace(/,/g, '');
+    const match = cleaned.match(/(\d+(?:\.\d+)?)/);
+    if (match) {
+      const parsed = parseFloat(match[1]);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        bitrateKbps = bitrateStr.toLowerCase().includes('mbps') ? Math.round(parsed * 1000) : Math.round(parsed);
+      }
+    }
+  }
+
+  bitrateKbps = Math.max(500, Math.min(25000, bitrateKbps));
+  const gop = fps * 2; // YouTube Live requires keyframe interval <= 4s (2s recommended)
+
+  return { width, height, fps, bitrateKbps, gop };
+}
+
+/**
+ * Safely combines an RTMP/RTMPS ingest URL with a stream key, preserving paths and query parameters
+ * (such as ?backup=1 on YouTube backup ingest endpoints).
+ */
+export function buildRtmpPublishTarget(rawServerUrl: string, rawStreamKey: string, allowEmbeddedKey: boolean = false): string {
+  let serverUrl = (rawServerUrl || 'rtmps://a.rtmps.youtube.com/live2').trim();
+  let streamKey = (rawStreamKey || '').trim();
+
+  // Backward compatibility: if legacy data placed full RTMP URL inside streamKey
+  if (streamKey.startsWith('rtmp://') || streamKey.startsWith('rtmps://')) {
+    try {
+      const keyAsUrl = new URL(streamKey);
+      const segs = keyAsUrl.pathname.split('/').filter(Boolean);
+      if (segs.length >= 2) {
+        streamKey = segs.pop()!;
+        keyAsUrl.pathname = '/' + segs.join('/');
+        serverUrl = keyAsUrl.toString().replace(/\/+$/, '');
+      }
+    } catch {
+      const lastSlashIdx = streamKey.lastIndexOf('/');
+      if (lastSlashIdx !== -1 && lastSlashIdx < streamKey.length - 1) {
+        serverUrl = streamKey.substring(0, lastSlashIdx).replace(/\/+$/, '');
+        streamKey = streamKey.substring(lastSlashIdx + 1);
+      }
+    }
+  } else {
+    streamKey = streamKey.replace(/^\/+/, '');
+  }
+
+  if (!serverUrl.startsWith('rtmp://') && !serverUrl.startsWith('rtmps://')) {
+    throw new Error('Invalid RTMP URL. URL must start with rtmp:// or rtmps://');
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(serverUrl);
+  } catch {
+    throw new Error('Malformed RTMP ingest URL.');
+  }
+
+  // Normalize accidental rtmps://a.rtmp.youtube.com -> rtmps://a.rtmps.youtube.com (valid TLS cert CN)
+  if (parsed.protocol === 'rtmps:') {
+    if (parsed.hostname === 'a.rtmp.youtube.com') parsed.hostname = 'a.rtmps.youtube.com';
+    if (parsed.hostname === 'b.rtmp.youtube.com') parsed.hostname = 'b.rtmps.youtube.com';
+  }
+
+  const pathSegments = parsed.pathname.split('/').filter(Boolean);
+  const lastSeg = pathSegments[pathSegments.length - 1] || '';
+
+  // For secondary/backup targets that already carry their own stream key (e.g. .../live2/other-key), preserve it
+  const hasOwnKeyAlready = allowEmbeddedKey && pathSegments.length >= 2 && !['live2', 'live', 'rtmp', 'app', 'stream'].includes(lastSeg.toLowerCase());
+
+  if (!hasOwnKeyAlready) {
+    if (!streamKey) {
+      throw new Error('Valid YouTube RTMP Stream Key is required.');
+    }
+    if (lastSeg !== streamKey) {
+      pathSegments.push(streamKey);
+    }
+    parsed.pathname = '/' + pathSegments.join('/');
+  }
+
+  return parsed.toString();
+}
+
+function probeTcpPort(host: string, port: number, timeoutMs: number = 700): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host, port, timeout: timeoutMs }, () => {
+      sock.destroy();
+      resolve(true);
+    });
+    sock.on('timeout', () => {
+      sock.destroy();
+      resolve(false);
+    });
+    sock.on('error', () => {
+      sock.destroy();
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * Ensures YouTube RTMP targets work in both VPS environments (port 1935 open) and cloud containers
+ * (port 1935 blocked -> automatically upgrades to native FFmpeg RTMPS on port 443).
+ */
+export async function resolveReachableRtmpTarget(targetUrl: string): Promise<string> {
+  let parsed: URL;
+  try {
+    parsed = new URL(targetUrl);
+  } catch {
+    return targetUrl;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const isYoutube = host.endsWith('.youtube.com') || host === 'youtube.com';
+  if (!isYoutube) {
+    return targetUrl;
+  }
+
+  // Always map YouTube rtmps:// to *.rtmps.youtube.com for proper TLS SNI & certificate match
+  if (parsed.protocol === 'rtmps:') {
+    if (host === 'a.rtmp.youtube.com') parsed.hostname = 'a.rtmps.youtube.com';
+    if (host === 'b.rtmp.youtube.com') parsed.hostname = 'b.rtmps.youtube.com';
+    return parsed.toString();
+  }
+
+  // For rtmp:// to YouTube, probe port 1935 briefly; if blocked, upgrade directly to native RTMPS over port 443
+  if (parsed.protocol === 'rtmp:') {
+    const port = parsed.port ? parseInt(parsed.port, 10) : 1935;
+    const portOpen = await probeTcpPort(parsed.hostname, port, 700);
+    if (!portOpen) {
+      parsed.protocol = 'rtmps:';
+      parsed.port = '';
+      if (host === 'a.rtmp.youtube.com') parsed.hostname = 'a.rtmps.youtube.com';
+      else if (host === 'b.rtmp.youtube.com') parsed.hostname = 'b.rtmps.youtube.com';
+      else if (!host.includes('.rtmps.')) parsed.hostname = 'a.rtmps.youtube.com';
+      console.log(`[RTMP Network] TCP:${port} unavailable for ${host}; using native YouTube RTMPS on ${parsed.hostname}:443`);
+    }
+  }
+
+  return parsed.toString();
+}
+
 export class StreamManager {
   private static instance: StreamManager;
   private processes: Map<string, {
@@ -54,10 +245,8 @@ export class StreamManager {
     consecutiveFeederFailures: number;
     intervalTimer?: NodeJS.Timeout;
     reconnectTimer?: NodeJS.Timeout;
+    cancelStartup?: (reason: string) => void;
     recentStderr: string[];
-    localBridge?: net.Server;
-    localBackupBridge?: net.Server;
-    activeBridgeSockets?: Set<net.Socket>;
   }> = new Map();
 
   private stopPromises: Map<string, Promise<boolean>> = new Map();
@@ -118,13 +307,13 @@ export class StreamManager {
     }
   }
 
-  private probeClipDetails(videoPath: string): {
+  private async probeClipDetails(videoPath: string): Promise<{
     duration: number | null;
     hasAudio: boolean;
     width: number;
     height: number;
     fps: number;
-  } {
+  }> {
     let duration: number | null = null;
     let hasAudio = false;
     let width = 1920;
@@ -134,7 +323,7 @@ export class StreamManager {
       return { duration, hasAudio, width, height, fps };
     }
     try {
-      const out = execFileSync(
+      const { stdout } = await execFileAsync(
         'ffprobe',
         [
           '-v', 'error',
@@ -145,8 +334,8 @@ export class StreamManager {
           videoPath
         ],
         { timeout: 15000, maxBuffer: 4 * 1024 * 1024 }
-      ).toString();
-      const parsed = JSON.parse(out);
+      );
+      const parsed = JSON.parse(stdout);
       const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
       const vStream = streams.find((s: any) => s.codec_type === 'video');
       const aStream = streams.find((s: any) => s.codec_type === 'audio');
@@ -165,17 +354,10 @@ export class StreamManager {
     return { duration, hasAudio, width, height, fps };
   }
 
-  /**
-   * Keeps original file untouched for streaming; spawnClipFeeder injects silent AAC audio
-   * on-the-fly in the MPEG-TS pipe whenever a video has no audio track, avoiding blocking 20s disk copies on large 4K files.
-   */
   public ensureVideoAudioTrack(videoPath: string): string {
     return videoPath;
   }
 
-  /**
-   * Probes precise duration in seconds using ffprobe.
-   */
   public getVideoDuration(videoPath: string): number | null {
     if (!fs.existsSync(videoPath)) return null;
     try {
@@ -198,32 +380,20 @@ export class StreamManager {
     }
   }
 
-  /**
-   * Writes standardized ffconcat file with explicit clip durations.
-   */
   public writeConcatFile(concatFilePath: string, videoPaths: string[]) {
     const lines = ['ffconcat version 1.0'];
     for (const v of videoPaths) {
       lines.push(`file '${v.replace(/'/g, "'\\''")}'`);
-      const dur = this.getVideoDuration(v);
-      if (dur && dur > 0) {
-        lines.push(`duration ${dur.toFixed(3)}`);
-      }
     }
     fs.writeFileSync(concatFilePath, lines.join('\n') + '\n', 'utf8');
   }
 
-  /**
-   * Starts an isolated real FFmpeg live stream process for a user.
-   */
   public async startStream(config: StreamConfig): Promise<StreamProcessStats> {
-    // If stream is already running with an active child process, return its status
     if (this.processes.has(config.streamId)) {
       const existing = this.processes.get(config.streamId)!;
       if (existing.stats.state === 'running' && existing.child && !existing.child.killed && existing.stats.pid) {
         return { ...existing.stats };
       }
-      // If previous process died or stopped, clean it up before launching new process
       await this.stopStream(config.streamId);
     }
 
@@ -262,7 +432,7 @@ export class StreamManager {
     return this.launchProcess(config);
   }
 
-  private spawnClipFeeder(streamId: string, masterChild: ChildProcess) {
+  private async spawnClipFeeder(streamId: string, masterChild: ChildProcess) {
     const item = this.processes.get(streamId);
     if (!item || item.child !== masterChild) return;
     if (item.stats.state === 'stopped' || item.stats.state === 'crashed') return;
@@ -281,17 +451,33 @@ export class StreamManager {
     item.stats.totalTracks = validPaths.length;
 
     const clipPath = validPaths[trackIdx];
-    const clipInfo = this.probeClipDetails(clipPath);
+    const clipInfo = await this.probeClipDetails(clipPath);
+
+    // Re-verify stream is still active after async probe
+    const latestItem = this.processes.get(streamId);
+    if (!latestItem || latestItem.child !== masterChild || latestItem.stats.state === 'stopped' || latestItem.stats.state === 'crashed') {
+      return;
+    }
+    if (!masterChild.stdin || masterChild.stdin.destroyed || !masterChild.stdin.writable) {
+      return;
+    }
+
     const clipDuration = clipInfo.duration || 0;
     const hasAudio = clipInfo.hasAudio;
     const isHeavySource = clipInfo.width > 1920 || clipInfo.height > 1080 || clipInfo.fps > 35;
-    const videoBitrate = item.config.videoBitrateKbps || 4500;
+    const encoding = parseStreamEncodingProfile(
+      item.config.resolution,
+      item.config.bitrate,
+      item.config.fps,
+      item.config.videoBitrateKbps
+    );
+
     const offsetStr = item.cumulativeTsOffset.toFixed(3);
     const trackStartMs = Date.now();
     item.stats.currentTrackStartedAt = new Date(trackStartMs).toISOString();
 
     console.log(
-      `[FFmpeg Playlist] Stream "${item.config.title}" playing Track #${trackIdx + 1}/${validPaths.length}: ${path.basename(clipPath)} (${clipInfo.width}x${clipInfo.height}@${clipInfo.fps}fps, offset=${offsetStr}s)`
+      `[FFmpeg Playlist] Stream "${item.config.title}" playing Track #${trackIdx + 1}/${validPaths.length}: ${path.basename(clipPath)} (${clipInfo.width}x${clipInfo.height}@${clipInfo.fps}fps -> ${encoding.width}x${encoding.height}@${encoding.fps}fps ${encoding.bitrateKbps}kbps, audio=${hasAudio}, offset=${offsetStr}s)`
     );
 
     const feederArgs: string[] = [
@@ -306,28 +492,31 @@ export class StreamManager {
     }
 
     feederArgs.push(
-      '-vf', 'fps=30,scale=1920:1080:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p',
+      '-vf', `fps=${encoding.fps},scale=${encoding.width}:${encoding.height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${encoding.width}:${encoding.height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p`,
       '-c:v', 'libx264',
       '-preset', isHeavySource ? 'superfast' : 'veryfast'
     );
 
     if (isHeavySource) {
-      feederArgs.push('-tune', 'zerolatency');
+      feederArgs.push('-tune', 'zerolatency', '-profile:v', 'main', '-level:v', '4.2');
+    } else {
+      feederArgs.push('-profile:v', 'high', '-level:v', '4.2', '-bf', '2');
     }
 
     feederArgs.push(
-      '-b:v', `${videoBitrate}k`,
-      '-maxrate', `${videoBitrate}k`,
-      '-bufsize', `${videoBitrate * 2}k`,
+      '-b:v', `${encoding.bitrateKbps}k`,
+      '-minrate', `${encoding.bitrateKbps}k`,
+      '-maxrate', `${encoding.bitrateKbps}k`,
+      '-bufsize', `${encoding.bitrateKbps * 2}k`,
       '-pix_fmt', 'yuv420p',
-      '-g', '60',
-      '-keyint_min', '60',
+      '-g', String(encoding.gop),
+      '-keyint_min', String(encoding.gop),
       '-sc_threshold', '0',
       '-c:a', 'aac',
       '-b:a', '128k',
       '-ar', '44100',
       '-ac', '2',
-      '-af', 'aresample=async=1',
+      '-af', 'aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo',
       '-map', '0:v:0',
       '-map', hasAudio ? '0:a:0' : '1:a:0',
       '-max_muxing_queue_size', '4096'
@@ -339,6 +528,7 @@ export class StreamManager {
 
     feederArgs.push(
       '-output_ts_offset', offsetStr,
+      '-mpegts_flags', '+resend_headers',
       '-f', 'mpegts',
       'pipe:1'
     );
@@ -347,7 +537,7 @@ export class StreamManager {
     try {
       feeder = spawn('ffmpeg', feederArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (spawnErr: any) {
-      console.error(`[FFmpeg Feeder] Failed to spawn clip feeder:`, spawnErr.message);
+      console.error('[FFmpeg Feeder] Failed to spawn clip feeder:', spawnErr.message);
       return;
     }
 
@@ -380,7 +570,6 @@ export class StreamManager {
     });
 
     feeder.on('close', (code) => {
-      // Ignore if feeder was replaced (e.g., stream stopped or restarted)
       if (item.feederChild !== feeder) return;
       item.feederChild = undefined;
 
@@ -395,11 +584,11 @@ export class StreamManager {
       if (code === 0) {
         item.consecutiveFeederFailures = 0;
         const advanceDur = clipDuration > 0 ? Math.max(clipDuration, elapsedSec) : Math.max(elapsedSec, 1);
-        item.cumulativeTsOffset += advanceDur + 0.05;
+        item.cumulativeTsOffset += advanceDur + 0.04;
       } else {
         item.consecutiveFeederFailures += 1;
         console.warn(`[FFmpeg Feeder] Track #${trackIdx + 1} exited with code ${code}; advancing queue.`);
-        item.cumulativeTsOffset += Math.max(elapsedSec, 0.5) + 0.05;
+        item.cumulativeTsOffset += Math.max(elapsedSec, 0.5) + 0.04;
         if (item.consecutiveFeederFailures >= Math.max(latestPaths.length * 2, 3)) {
           console.error(`[FFmpeg Feeder] Too many consecutive clip failures for stream ${streamId}; halting.`);
           try { masterChild.stdin?.end(); } catch {}
@@ -407,9 +596,16 @@ export class StreamManager {
         }
       }
 
-      // Advance cleanly to next video in playlist, and loop back to Track 0 after the last video finishes
-      item.currentTrackIndex = (trackIdx + 1) % latestPaths.length;
-      this.spawnClipFeeder(streamId, masterChild);
+      const shouldLoop = item.config.loop !== false;
+      const nextTrack = trackIdx + 1;
+      if (!shouldLoop && nextTrack >= latestPaths.length) {
+        console.log(`[FFmpeg Playlist] Single-run playlist completed for stream ${streamId}. Ending broadcast cleanly.`);
+        try { masterChild.stdin?.end(); } catch {}
+        return;
+      }
+
+      item.currentTrackIndex = nextTrack % latestPaths.length;
+      this.spawnClipFeeder(streamId, masterChild).catch(() => {});
     });
   }
 
@@ -417,9 +613,8 @@ export class StreamManager {
     const item = this.processes.get(config.streamId);
     if (!item) throw new Error('Stream configuration not found');
 
-    // 1. Verify FFmpeg binary is installed on the host
     if (!this.checkFfmpeg()) {
-      const errorMsg = 'FFmpeg binary is not installed on this server. Live streaming requires FFmpeg installed in system PATH (e.g. sudo apt install ffmpeg).';
+      const errorMsg = 'FFmpeg binary is not installed on this server. Live streaming requires FFmpeg installed in system PATH.';
       console.error(`[FFmpeg] Cannot start stream "${config.title}": ${errorMsg}`);
       item.stats.state = 'crashed';
       item.stats.pid = null;
@@ -453,16 +648,16 @@ export class StreamManager {
       throw new Error(errorMsg);
     }
 
-    // Stop any stale or conflicting stream process targeting the same YouTube RTMP stream key
+    // Stop any conflicting stream worker targeting the same YouTube RTMP stream key
     for (const [existingId, existingItem] of this.processes.entries()) {
-      if (existingId !== config.streamId && (existingItem.stats.state === 'running' || existingItem.stats.state === 'starting')) {
+      if (existingId !== config.streamId && (existingItem.stats.state === 'running' || existingItem.stats.state === 'starting' || existingItem.stats.state === 'reconnecting')) {
         try {
           const otherKey = decryptStreamKey(
             existingItem.config.encryptedStreamKey,
             existingItem.config.streamKeyIv,
             existingItem.config.streamKeyAuthTag
           );
-          if (otherKey && otherKey === plainStreamKey) {
+          if (otherKey && otherKey.trim() === plainStreamKey.trim()) {
             console.log(`[FFmpeg Session Isolation] Terminating conflicting previous stream worker ${existingId} using the same RTMP stream key.`);
             await this.stopStream(existingId);
           }
@@ -470,89 +665,28 @@ export class StreamManager {
       }
     }
 
-    // 3. Construct and sanitize RTMP target URL safely (RTMP_URL + "/" + Stream_Key)
-    let baseRtmpUrl = (config.streamUrl || 'rtmp://a.rtmp.youtube.com/live2').trim().replace(/\/+$/, '');
-    let cleanStreamKey = plainStreamKey.trim();
-
-    // Backward compatibility: If legacy data had the full RTMP URL inside streamKey
-    if (cleanStreamKey.startsWith('rtmp://') || cleanStreamKey.startsWith('rtmps://')) {
-      const lastSlashIdx = cleanStreamKey.lastIndexOf('/');
-      if (lastSlashIdx !== -1 && lastSlashIdx < cleanStreamKey.length - 1) {
-        baseRtmpUrl = cleanStreamKey.substring(0, lastSlashIdx).replace(/\/+$/, '');
-        cleanStreamKey = cleanStreamKey.substring(lastSlashIdx + 1);
-      }
-    } else {
-      // Clean accidental leading slash from stream key
-      cleanStreamKey = cleanStreamKey.replace(/^\/+/, '');
-    }
-
-    if (!baseRtmpUrl.startsWith('rtmp://') && !baseRtmpUrl.startsWith('rtmps://')) {
-      const errorMsg = 'Invalid RTMP URL. URL must start with rtmp:// or rtmps://';
+    // 3. Build & resolve real RTMP/RTMPS ingestion target(s)
+    let rawPrimaryTarget: string;
+    try {
+      rawPrimaryTarget = buildRtmpPublishTarget(config.streamUrl, plainStreamKey, false);
+    } catch (urlErr: any) {
       item.stats.state = 'crashed';
       item.stats.pid = null;
-      item.stats.lastError = errorMsg;
-      throw new Error(errorMsg);
+      item.stats.lastError = urlErr.message;
+      throw urlErr;
     }
 
-    if (!cleanStreamKey) {
-      const errorMsg = 'Valid YouTube RTMP Stream Key is required.';
-      item.stats.state = 'crashed';
-      item.stats.pid = null;
-      item.stats.lastError = errorMsg;
-      throw new Error(errorMsg);
-    }
+    const activePrimaryTarget = await resolveReachableRtmpTarget(rawPrimaryTarget);
+    console.log(`[RTMP Target] Primary push endpoint: ${this.maskSensitiveOutput(activePrimaryTarget)}`);
 
-    // Modern Bulletproof Ingestion Bridge:
-    let activePrimaryTarget = `${baseRtmpUrl}/${cleanStreamKey}`;
-    if (baseRtmpUrl.includes('youtube.com')) {
-      const ytHost = baseRtmpUrl.includes('b.rtmp.youtube.com') ? 'b.rtmp.youtube.com' : 'a.rtmp.youtube.com';
+    let activeBackupTarget = '';
+    if (config.isDualStream && config.backupRtmpUrl && config.backupRtmpUrl.trim()) {
       try {
-        if (item.localBridge) {
-          try { item.localBridge.close(); } catch {}
-          item.localBridge = undefined;
-        }
-        if (!item.activeBridgeSockets) {
-          item.activeBridgeSockets = new Set();
-        }
-        const bridgeSockets = item.activeBridgeSockets;
-        const bridge = net.createServer((clientSock) => {
-          bridgeSockets.add(clientSock);
-          const upstream = tls.connect({
-            host: ytHost,
-            port: 443,
-            rejectUnauthorized: false
-          }, () => {
-            clientSock.pipe(upstream);
-            upstream.pipe(clientSock);
-          });
-          bridgeSockets.add(upstream);
-          const cleanupSockets = () => {
-            bridgeSockets.delete(clientSock);
-            bridgeSockets.delete(upstream);
-          };
-          upstream.on('close', cleanupSockets);
-          clientSock.on('close', cleanupSockets);
-          upstream.on('error', (uErr) => {
-            console.warn(`[RTMP Bridge] Upstream TLS notice (${ytHost}:443):`, uErr.message);
-            cleanupSockets();
-            clientSock.destroy();
-          });
-          clientSock.on('error', () => {
-            cleanupSockets();
-            upstream.destroy();
-          });
-        });
-
-        await new Promise<void>((resolveServer) => {
-          bridge.listen(0, '127.0.0.1', () => resolveServer());
-        });
-
-        const port = (bridge.address() as net.AddressInfo).port;
-        activePrimaryTarget = `rtmp://127.0.0.1:${port}/live2/${cleanStreamKey}`;
-        item.localBridge = bridge;
-        console.log(`[RTMP Bridge] Active local TLS relay established on port ${port} -> ${ytHost}:443`);
-      } catch (bridgeErr: any) {
-        console.warn('[RTMP Bridge] Could not establish local bridge, falling back to direct URL:', bridgeErr.message);
+        const rawBackup = buildRtmpPublishTarget(config.backupRtmpUrl.trim(), plainStreamKey, true);
+        activeBackupTarget = await resolveReachableRtmpTarget(rawBackup);
+        console.log(`[RTMP Target] Backup push endpoint: ${this.maskSensitiveOutput(activeBackupTarget)}`);
+      } catch (bErr: any) {
+        console.warn('[RTMP Target] Skipping invalid dual-stream backup URL:', bErr.message);
       }
     }
 
@@ -566,7 +700,6 @@ export class StreamManager {
       throw new Error(errorMsg);
     }
 
-    // Ensure all videos have valid, standardized audio tracks so transitions never drop audio
     const validVideoPaths = rawVideoPaths.map(v => this.ensureVideoAudioTrack(v));
     item.config.videoPaths = validVideoPaths;
     item.stats.totalTracks = validVideoPaths.length;
@@ -579,7 +712,6 @@ export class StreamManager {
     item.cumulativeTsOffset = 0;
     item.consecutiveFeederFailures = 0;
 
-    // Keep concat manifest file updated for reference/diagnostics
     const tempDir = path.join(os.tmpdir(), 'streamjoin_concat');
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
@@ -588,95 +720,51 @@ export class StreamManager {
     this.writeConcatFile(concatPath, validVideoPaths);
     item.concatFilePath = concatPath;
 
-    let ffmpegArgs: string[];
     const commonMasterInputArgs = [
       '-fflags', '+genpts',
-      '-analyzeduration', '2000000',
-      '-probesize', '2000000',
+      '-thread_queue_size', '1024',
+      '-analyzeduration', '500000',
+      '-probesize', '500000',
       '-f', 'mpegts',
-      '-i', 'pipe:0',
+      '-i', 'pipe:0'
+    ];
+
+    const perOutputFlvArgs = (target: string): string[] => [
+      '-map', '0:v:0',
+      '-map', '0:a:0?',
       '-c:v', 'copy',
       '-c:a', 'copy',
       '-bsf:a', 'aac_adtstoasc',
-      '-map', '0:v:0',
-      '-map', '0:a:0?',
-      '-max_muxing_queue_size', '4096'
+      '-max_muxing_queue_size', '4096',
+      '-rw_timeout', '10000000',
+      '-f', 'flv',
+      '-flvflags', 'no_duration_filesize',
+      target
     ];
 
-    let activeBackupTarget = config.backupRtmpUrl ? config.backupRtmpUrl.trim() : '';
-    if (config.isDualStream && activeBackupTarget) {
-      if (activeBackupTarget.includes('youtube.com')) {
-        const ytBackupHost = activeBackupTarget.includes('b.rtmp.youtube.com') ? 'b.rtmp.youtube.com' : 'a.rtmp.youtube.com';
-        try {
-          if (item.localBackupBridge) {
-            try { item.localBackupBridge.close(); } catch {}
-            item.localBackupBridge = undefined;
-          }
-          if (!item.activeBridgeSockets) {
-            item.activeBridgeSockets = new Set();
-          }
-          const backupSockets = item.activeBridgeSockets;
-          const backupBridge = net.createServer((clientSock) => {
-            backupSockets.add(clientSock);
-            const upstream = tls.connect({
-              host: ytBackupHost,
-              port: 443,
-              rejectUnauthorized: false
-            }, () => {
-              clientSock.pipe(upstream);
-              upstream.pipe(clientSock);
-            });
-            backupSockets.add(upstream);
-            const cleanupSockets = () => {
-              backupSockets.delete(clientSock);
-              backupSockets.delete(upstream);
-            };
-            upstream.on('close', cleanupSockets);
-            clientSock.on('close', cleanupSockets);
-            upstream.on('error', () => {
-              cleanupSockets();
-              clientSock.destroy();
-            });
-            clientSock.on('error', () => {
-              cleanupSockets();
-              upstream.destroy();
-            });
-          });
-
-          await new Promise<void>((resolveServer) => {
-            backupBridge.listen(0, '127.0.0.1', () => resolveServer());
-          });
-
-          const bPort = (backupBridge.address() as net.AddressInfo).port;
-          const parts = activeBackupTarget.split('/');
-          const bKey = parts[parts.length - 1];
-          activeBackupTarget = `rtmp://127.0.0.1:${bPort}/live2/${bKey}`;
-          item.localBackupBridge = backupBridge;
-        } catch (bErr: any) {
-          console.warn('[RTMP Backup Bridge] Error:', bErr.message);
-        }
-      }
-      // Dual RTMP Streaming via tee muxer with standard FLV headers
-      const teeOutput = `[f=flv:flvflags=no_duration_filesize:onfail=ignore]${activePrimaryTarget}|[f=flv:flvflags=no_duration_filesize:onfail=ignore]${activeBackupTarget}`;
-      ffmpegArgs = [
-        ...commonMasterInputArgs,
-        '-f', 'tee',
-        teeOutput
-      ];
-    } else {
-      // Standard Single RTMP Target to YouTube
-      ffmpegArgs = [
-        ...commonMasterInputArgs,
-        '-f', 'flv',
-        '-flvflags', 'no_duration_filesize',
-        activePrimaryTarget
-      ];
-    }
+    const ffmpegArgs: string[] = [
+      ...commonMasterInputArgs,
+      ...perOutputFlvArgs(activePrimaryTarget),
+      ...(activeBackupTarget ? perOutputFlvArgs(activeBackupTarget) : [])
+    ];
 
     console.log(`[FFmpeg] Spawning continuous RTMP worker for Stream: ${config.streamId} ("${config.title}") with ${validVideoPaths.length} playlist video(s)`);
 
     return new Promise<StreamProcessStats>((resolve, reject) => {
       let resolved = false;
+      let startupTimer: NodeJS.Timeout | undefined;
+
+      const finishStartupReject = (err: Error) => {
+        if (resolved) return;
+        resolved = true;
+        if (startupTimer) clearTimeout(startupTimer);
+        item.cancelStartup = undefined;
+        reject(err);
+      };
+
+      item.cancelStartup = (reason: string) => {
+        finishStartupReject(new Error(reason));
+      };
 
       let child: ChildProcess;
       try {
@@ -685,7 +773,7 @@ export class StreamManager {
         item.stats.state = 'crashed';
         item.stats.pid = null;
         item.stats.lastError = `Failed to spawn FFmpeg: ${err.message}`;
-        return reject(new Error(item.stats.lastError));
+        return finishStartupReject(new Error(item.stats.lastError));
       }
 
       child.stdin?.on('error', () => {});
@@ -699,26 +787,26 @@ export class StreamManager {
         return reject(new Error(item.stats.lastError));
       }
 
-      // Real OS Process ID
       const nowIso = new Date().toISOString();
       item.stats.pid = child.pid;
+      item.stats.state = 'starting';
       item.stats.startedAt = nowIso;
       item.stats.currentTrackStartedAt = nowIso;
       item.stats.uptimeSeconds = 0;
       item.stats.lastError = null;
 
       // Launch the first clip feeder into masterChild.stdin
-      this.spawnClipFeeder(config.streamId, child);
+      this.spawnClipFeeder(config.streamId, child).catch(() => {});
 
       child.stderr?.on('data', (data) => {
+        if (item.child !== child) return;
         const text = data.toString();
         const lines = text.split('\n').filter(Boolean);
         item.recentStderr.push(...lines);
-        if (item.recentStderr.length > 50) {
-          item.recentStderr = item.recentStderr.slice(-50);
+        if (item.recentStderr.length > 60) {
+          item.recentStderr = item.recentStderr.slice(-60);
         }
 
-        // Parse real bitrate directly from master FFmpeg output if present
         const bitrateMatch = text.match(/bitrate=\s*([\d.]+)kbits\/s/);
         if (bitrateMatch && parseFloat(bitrateMatch[1]) > 0) {
           item.stats.bitrateKbps = parseFloat(bitrateMatch[1]);
@@ -726,33 +814,34 @@ export class StreamManager {
 
         if (text.includes('frame=') && !resolved) {
           resolved = true;
+          if (startupTimer) clearTimeout(startupTimer);
+          item.cancelStartup = undefined;
           item.stats.state = 'running';
-          console.log(`[FFmpeg Supervisor] Stream "${config.title}" running and sending frames (PID ${child.pid})`);
+          console.log(`[FFmpeg Supervisor] Stream "${config.title}" connected and pushing frames to YouTube (PID ${child.pid})`);
           resolve({ ...item.stats });
         }
       });
 
       child.on('error', (err) => {
-        // If this child is no longer the active child for this stream, ignore completely
         if (item.child !== child) return;
-
+        if (startupTimer) clearTimeout(startupTimer);
         console.error(`[FFmpeg] Stream ${config.streamId} process error:`, err);
         this.killFeeder(item);
         item.stats.lastError = err.message;
-        item.stats.state = 'crashed';
         item.stats.pid = null;
         item.stats.fps = 0;
         item.stats.bitrateKbps = 0;
-        this.handleProcessExit(config.streamId, -1);
         if (!resolved) {
-          resolved = true;
-          reject(err);
+          item.stats.state = 'crashed';
+          finishStartupReject(err);
+        } else {
+          this.handleProcessExit(config.streamId, -1);
         }
       });
 
       child.on('close', (code) => {
-        // If this child is no longer the active child for this stream, ignore completely
         if (item.child !== child) return;
+        if (startupTimer) clearTimeout(startupTimer);
 
         console.warn(`[FFmpeg] Stream ${config.streamId} process closed with exit code ${code}`);
         this.killFeeder(item);
@@ -763,30 +852,35 @@ export class StreamManager {
         item.stats.pid = null;
         item.stats.fps = 0;
         item.stats.bitrateKbps = 0;
-        this.handleProcessExit(config.streamId, code);
+
         if (!resolved) {
-          resolved = true;
-          reject(new Error(extractedError));
+          item.stats.state = 'crashed';
+          finishStartupReject(new Error(extractedError));
+        } else {
+          this.handleProcessExit(config.streamId, code);
         }
       });
 
-      // Verify that the process stays alive after launch initialization
-      setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          if (child.exitCode === null) {
-            item.stats.state = 'running';
-            console.log(`[FFmpeg Supervisor] Stream "${config.title}" running with real PID ${child.pid}`);
-            resolve({ ...item.stats });
-          } else {
-            this.killFeeder(item);
-            item.stats.state = 'crashed';
-            item.stats.pid = null;
-            const errorMsg = item.stats.lastError || `FFmpeg process exited immediately with code ${child.exitCode}`;
-            reject(new Error(errorMsg));
-          }
+      // Wait up to 8s for RTMP handshake + first frame push confirmation
+      startupTimer = setTimeout(() => {
+        if (resolved) return;
+        if (item.child !== child || item.stats.state === 'stopped') {
+          return finishStartupReject(new Error('Stream stopped during initialization.'));
         }
-      }, 4000);
+        resolved = true;
+        item.cancelStartup = undefined;
+        if (child.exitCode === null) {
+          item.stats.state = 'running';
+          console.log(`[FFmpeg Supervisor] Stream "${config.title}" active with PID ${child.pid}`);
+          resolve({ ...item.stats });
+        } else {
+          this.killFeeder(item);
+          item.stats.state = 'crashed';
+          item.stats.pid = null;
+          const errorMsg = item.stats.lastError || this.extractRecentError(item.recentStderr, child.exitCode);
+          reject(new Error(errorMsg));
+        }
+      }, 8000);
     });
   }
 
@@ -827,25 +921,31 @@ export class StreamManager {
     if (!stderrLines || stderrLines.length === 0) {
       return `FFmpeg process terminated unexpectedly (exit code: ${exitCode}).`;
     }
-    // Search backward for real error message
+    const joined = stderrLines.join('\n');
+    if (/NetStream\.Publish\.(BadName|Rejected|Denied|Unauthorized)|401 Unauthorized|403 Forbidden/i.test(joined)) {
+      return 'YouTube rejected broadcast stream key (NetStream.Publish.Rejected). Please check your YouTube Studio Stream Key.';
+    }
+    if (/Input\/output error|End of file/i.test(joined) && !/frame=\s*[1-9]\d*/.test(joined)) {
+      return 'YouTube rejected broadcast stream key or closed RTMPS connection during handshake. Please verify your YouTube Studio Stream Key and ensure your live event is ready.';
+    }
+    if (/Connection timed out|Operation timed out|timed out/i.test(joined)) {
+      return 'Connection to YouTube RTMP/RTMPS ingest timed out. Please check network/firewall connectivity.';
+    }
+    if (/Connection refused/i.test(joined)) {
+      return 'RTMP connection refused by remote server. Verify your RTMP ingest URL and port.';
+    }
     for (let i = stderrLines.length - 1; i >= 0; i--) {
       const line = stderrLines[i].trim();
-      if (line.match(/Immediate exit requested/i) || line.match(/Exiting normally/i)) {
+      if (/Immediate exit requested|Exiting normally|muxing overhead|Error writing trailer|video:/i.test(line)) {
         continue;
       }
-      if (line.match(/Input\/output error/i)) {
-        return 'YouTube rejected broadcast stream key or closed connection. Please verify your YouTube Studio Stream Key.';
-      }
-      if (line.match(/(error|fatal|cannot|invalid|failed|refused|unknown|no such file)/i)) {
-        if (line.includes('muxing overhead') || line.includes('Error writing trailer') || line.includes('video:')) {
-          continue;
-        }
+      if (/(error|fatal|cannot|invalid|failed|refused|unknown|no such file|tls)/i.test(line)) {
         return this.maskSensitiveOutput(line);
       }
     }
-    const filtered = stderrLines.filter(l => 
-      !l.includes('frame=') && 
-      !l.includes('fps=') && 
+    const filtered = stderrLines.filter(l =>
+      !l.includes('frame=') &&
+      !l.includes('fps=') &&
       !l.includes('muxing overhead') &&
       !l.includes('video:') &&
       !l.includes('Error writing trailer') &&
@@ -858,9 +958,27 @@ export class StreamManager {
   private maskSensitiveOutput(text: string): string {
     if (!text) return '';
     return text
-      .replace(/(rtmps?:\/\/[^\s\/]+\/[^\s\/]+\/)([^\s\?\&]+)/gi, '$1[PROTECTED_STREAM_KEY]')
+      .replace(/(rtmps?:\/\/[^\s\/]+\/[^\s\/\?]+\/)([^\s\?\&]+)/gi, '$1[PROTECTED_STREAM_KEY]')
       .replace(/(live2\/)([\w-]+)/gi, '$1[PROTECTED_STREAM_KEY]')
       .replace(/(\?key=)([\w-]+)/gi, '$1[PROTECTED_STREAM_KEY]');
+  }
+
+  private finalizeHaltedStream(streamId: string, reason: string) {
+    const item = this.processes.get(streamId);
+    if (!item) return;
+    item.stats.state = 'crashed';
+    item.stats.pid = null;
+    item.stats.fps = 0;
+    item.stats.bitrateKbps = 0;
+    item.stats.lastError = reason;
+    console.info(`[FFmpeg Supervisor] Stream ${streamId} broadcast halted: ${reason}`);
+    if (this.onStreamHaltedCallback) {
+      try {
+        this.onStreamHaltedCallback(streamId, reason);
+      } catch (cbErr: any) {
+        console.warn('[StreamManager] Notice in onStreamHaltedCallback:', cbErr.message);
+      }
+    }
   }
 
   private handleProcessExit(streamId: string, exitCode: number | null) {
@@ -869,8 +987,8 @@ export class StreamManager {
 
     this.killFeeder(item);
 
-    if (item.stats.state === 'stopped' || item.stats.state === 'starting') {
-      return; // Normal intentional user stop or starting a new worker
+    if (item.stats.state === 'stopped') {
+      return;
     }
 
     item.stats.pid = null;
@@ -878,50 +996,54 @@ export class StreamManager {
     item.stats.bitrateKbps = 0;
 
     const errorMsg = item.stats.lastError || '';
-    if (errorMsg.includes('Immediate exit requested') || exitCode === 255) {
-      return; // Intentional stop signal
+
+    const isPermanentConfigOrAuthFailure =
+      /rejected|BadName|Unauthorized|403 Forbidden|Invalid argument|Invalid data|No such file|Protocol not found|Malformed RTMP/i.test(errorMsg) ||
+      (/Connection refused|Authentication|handshake/i.test(errorMsg) && item.stats.uptimeSeconds < 5);
+
+    const maxReconnectAttempts = 5;
+
+    if (isPermanentConfigOrAuthFailure || item.stats.restartAttempts >= maxReconnectAttempts || exitCode === 0) {
+      const finalReason = exitCode === 0
+        ? 'Broadcast playlist finished cleanly.'
+        : (item.stats.lastError || `FFmpeg stream halted (exit code ${exitCode}).`);
+      this.finalizeHaltedStream(streamId, finalReason);
+      return;
     }
 
-    const isFatalAuthOrIo = errorMsg.includes('Input/output') ||
-                            errorMsg.includes('rejected') ||
-                            errorMsg.includes('invalid') ||
-                            errorMsg.includes('Authentication') ||
-                            errorMsg.includes('Connection refused') ||
-                            item.stats.uptimeSeconds < 4;
+    this.scheduleReconnect(streamId);
+  }
 
-    // Do NOT loop reconnect if the stream key was rejected by YouTube or connection failed immediately on startup
-    if (isFatalAuthOrIo || item.stats.restartAttempts >= 3 || exitCode === 0) {
-      if (item.localBridge) {
-        try { item.localBridge.close(); } catch {}
-        item.localBridge = undefined;
-      }
-      if (item.localBackupBridge) {
-        try { item.localBackupBridge.close(); } catch {}
-        item.localBackupBridge = undefined;
-      }
-      item.stats.state = 'crashed';
-      if (!item.stats.lastError) {
-        item.stats.lastError = `FFmpeg stream halted (exit code ${exitCode}).`;
-      }
-      console.info(`[FFmpeg Supervisor] Stream ${streamId} broadcast stopped: ${item.stats.lastError}`);
-      if (this.onStreamHaltedCallback) {
-        try {
-          this.onStreamHaltedCallback(streamId, item.stats.lastError);
-        } catch (cbErr: any) {
-          console.warn('[StreamManager] Notice in onStreamHaltedCallback:', cbErr.message);
-        }
-      }
-      return;
+  private scheduleReconnect(streamId: string) {
+    const item = this.processes.get(streamId);
+    if (!item || item.stats.state === 'stopped') return;
+
+    if (item.reconnectTimer) {
+      clearTimeout(item.reconnectTimer);
+      item.reconnectTimer = undefined;
     }
 
     item.stats.restartAttempts += 1;
     item.stats.state = 'reconnecting';
-    const delayMs = 3000 * item.stats.restartAttempts;
-    console.log(`[FFmpeg Auto-Reconnect] Stream ${streamId} disconnected. Attempting reconnect #${item.stats.restartAttempts} in ${delayMs / 1000}s...`);
+    item.config.initialTrackIndex = item.currentTrackIndex;
+    const delayMs = Math.min(15000, 3000 * item.stats.restartAttempts);
+    console.log(`[FFmpeg Auto-Reconnect] Stream ${streamId} disconnected. Attempting reconnect #${item.stats.restartAttempts}/5 in ${delayMs / 1000}s (track #${item.currentTrackIndex + 1})...`);
 
     item.reconnectTimer = setTimeout(() => {
-      this.launchProcess(item.config).catch(err => {
-        console.warn(`[FFmpeg Auto-Reconnect] Reconnect #${item.stats.restartAttempts} failed:`, err.message);
+      item.reconnectTimer = undefined;
+      const latestItem = this.processes.get(streamId);
+      if (!latestItem || latestItem.stats.state === 'stopped') return;
+
+      this.launchProcess(latestItem.config).catch((err) => {
+        console.warn(`[FFmpeg Auto-Reconnect] Reconnect #${latestItem.stats.restartAttempts} failed:`, err.message);
+        if (latestItem.stats.state === 'stopped') return;
+
+        const fatalReject = /rejected|BadName|Unauthorized|Invalid argument|No such file|Malformed RTMP/i.test(err.message || '');
+        if (!fatalReject && latestItem.stats.restartAttempts < 5) {
+          this.scheduleReconnect(streamId);
+        } else {
+          this.finalizeHaltedStream(streamId, err.message || 'Auto-reconnect exhausted.');
+        }
       });
     }, delayMs);
   }
@@ -952,27 +1074,14 @@ export class StreamManager {
         item.reconnectTimer = undefined;
       }
 
+      if (item.cancelStartup) {
+        item.cancelStartup('Stream stopped during initialization.');
+      }
+
       // 1. Stop active clip feeder immediately so playlist does not advance or wait
       this.killFeeder(item);
 
-      // 2. Immediately terminate all active RTMP / TLS sockets to disconnect YouTube right away
-      if (item.activeBridgeSockets) {
-        for (const sock of Array.from(item.activeBridgeSockets)) {
-          try { sock.destroy(); } catch {}
-        }
-        item.activeBridgeSockets.clear();
-      }
-
-      if (item.localBridge) {
-        try { item.localBridge.close(); } catch {}
-        item.localBridge = undefined;
-      }
-      if (item.localBackupBridge) {
-        try { item.localBackupBridge.close(); } catch {}
-        item.localBackupBridge = undefined;
-      }
-
-      // 3. Immediately terminate master FFmpeg process
+      // 2. Immediately terminate master FFmpeg process & close RTMP/RTMPS socket
       const oldChild = item.child;
       item.child = undefined;
 
@@ -1026,7 +1135,7 @@ export class StreamManager {
         } catch {}
       }
 
-      console.log(`[FFmpeg Supervisor] Stream ${streamId} stopped and RTMP connection disconnected immediately.`);
+      console.log(`[FFmpeg Supervisor] Stream ${streamId} stopped and RTMP/RTMPS connection disconnected immediately.`);
       return true;
     })().finally(() => {
       this.stopPromises.delete(streamId);
@@ -1087,16 +1196,12 @@ export class StreamManager {
         if (item.stats.state === 'running') {
           if (item.child && !item.child.killed && item.child.exitCode === null) {
             item.stats.uptimeSeconds += 5;
-          } else {
-            item.stats.state = 'crashed';
-            item.stats.pid = null;
-            item.stats.fps = 0;
-            item.stats.bitrateKbps = 0;
-            if (this.onStreamHaltedCallback) {
-              try {
-                this.onStreamHaltedCallback(streamId, item.stats.lastError || 'Process terminated');
-              } catch {}
+            // Reset transient reconnect counter after 60s of stable continuous streaming
+            if (item.stats.uptimeSeconds >= 60 && item.stats.restartAttempts > 0) {
+              item.stats.restartAttempts = 0;
             }
+          } else {
+            this.finalizeHaltedStream(streamId, item.stats.lastError || 'Process terminated');
           }
         }
       });

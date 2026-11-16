@@ -18,26 +18,20 @@ export interface UploadedMediaResult {
 const CHUNK_THRESHOLD_BYTES = 8 * 1024 * 1024; // Files > 8 MB use chunked upload to bypass 32 MiB proxy limits
 const DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB chunks
 
+let memoryAuthToken: string | null = null;
+
+export function setUploadAuthToken(token: string | null): void {
+  memoryAuthToken = token && token.trim() ? token.trim() : null;
+}
+
+export function getUploadAuthToken(): string | null {
+  return memoryAuthToken;
+}
+
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
-  const token = localStorage.getItem('streamjoin_token');
-  const userRaw = localStorage.getItem('streamjoin_current_user');
-  let userObj: any = null;
-  try {
-    if (userRaw) userObj = JSON.parse(userRaw);
-  } catch {}
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  if (userObj?.id) {
-    headers['x-user-id'] = userObj.id;
-  }
-  if (userObj?.email) {
-    headers['x-user-email'] = userObj.email;
-  }
-  if (userObj?.role === 'super_admin' || userObj?.role === 'admin') {
-    headers['x-admin-role'] = userObj.role;
+  if (memoryAuthToken) {
+    headers['Authorization'] = `Bearer ${memoryAuthToken}`;
   }
   return headers;
 }

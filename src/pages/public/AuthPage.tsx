@@ -7,11 +7,19 @@ interface AuthPageProps {
 }
 
 export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => {
-  const { login, register, navigate, showToast, switchRole } = useApp();
+  const { login, register, showToast } = useApp();
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [showPassword, setShowPassword] = useState(false);
   const [forgotModalOpen, setForgotModalOpen] = useState(false);
+  const [forgotStep, setForgotStep] = useState<'request' | 'reset'>('request');
   const [forgotEmail, setForgotEmail] = useState('');
+  const [resetTokenInput, setResetTokenInput] = useState('');
+  const [useRecoveryKey, setUseRecoveryKey] = useState(false);
+  const [recoveryKeyInput, setRecoveryKeyInput] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotStatusMsg, setForgotStatusMsg] = useState<string | null>(null);
 
   // Selected subscription plan from Pricing or Home page
   const [selectedPlan, setSelectedPlan] = useState<string>(() => {
@@ -35,7 +43,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(true);
   const [agreeTerms, setAgreeTerms] = useState(true);
 
   const [loading, setLoading] = useState(false);
@@ -65,10 +72,93 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
     }
   };
 
-  const handleForgotSubmit = (e: React.FormEvent) => {
+  const openForgotModal = () => {
+    setForgotEmail(email.trim());
+    setForgotStep('request');
+    setResetTokenInput('');
+    setUseRecoveryKey(false);
+    setRecoveryKeyInput('');
+    setResetNewPassword('');
+    setResetConfirmPassword('');
+    setForgotStatusMsg(null);
+    setForgotModalOpen(true);
+  };
+
+  const handleForgotRequestSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    showToast(`Password reset link sent to ${forgotEmail || email}`, 'success');
-    setForgotModalOpen(false);
+    const identifier = forgotEmail.trim();
+    if (!identifier) {
+      showToast('Please enter your username or email address.', 'error');
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: identifier })
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
+        const msg = data.message || 'Reset token generated. Check your configured email or server security logs.';
+        setForgotStatusMsg(msg);
+        setForgotStep('reset');
+        showToast('Password reset token generated (valid for 15 minutes).', 'info');
+      } else {
+        showToast(data?.message || 'Unable to process password reset request.', 'error');
+      }
+    } catch (err: any) {
+      showToast(`Reset request failed: ${err?.message || 'Network error'}`, 'error');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const handleResetConfirmSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!useRecoveryKey && !resetTokenInput.trim()) {
+      showToast('Please enter the verification reset token.', 'error');
+      return;
+    }
+    if (useRecoveryKey && !recoveryKeyInput.trim()) {
+      showToast('Please enter the server recovery key.', 'error');
+      return;
+    }
+    if (resetNewPassword.trim().length < 6) {
+      showToast('New password must be at least 6 characters long.', 'error');
+      return;
+    }
+    if (resetNewPassword !== resetConfirmPassword) {
+      showToast('New passwords do not match.', 'error');
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: forgotEmail.trim() || undefined,
+          token: useRecoveryKey ? undefined : resetTokenInput.trim(),
+          recoveryKey: useRecoveryKey ? recoveryKeyInput.trim() : undefined,
+          newPassword: resetNewPassword
+        })
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
+        showToast(data.message || 'Password reset successfully. Please login with your new password.', 'success');
+        setPassword('');
+        setForgotModalOpen(false);
+      } else {
+        showToast(data?.message || 'Invalid or expired reset credentials.', 'error');
+      }
+    } catch (err: any) {
+      showToast(`Password reset failed: ${err?.message || 'Network error'}`, 'error');
+    } finally {
+      setForgotLoading(false);
+    }
   };
 
   return (
@@ -256,19 +346,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
 
             {mode === 'login' ? (
               <div className="flex items-center justify-between text-xs">
-                <label className="flex items-center gap-2 text-slate-400 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={e => setRememberMe(e.target.checked)}
-                    className="rounded bg-slate-900 border-slate-700 text-[#FF1B6B] focus:ring-[#FF1B6B]"
-                  />
-                  <span>Remember me</span>
-                </label>
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>Session login required</span>
+                </span>
                 <button
                   type="button"
-                  onClick={() => setForgotModalOpen(true)}
-                  className="text-xs text-[#FF1B6B] hover:underline"
+                  onClick={openForgotModal}
+                  className="text-xs text-[#FF1B6B] hover:underline font-medium"
                 >
                   Forgot Password?
                 </button>
@@ -325,36 +410,156 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
       {/* Forgot Password Modal */}
       {forgotModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
-          <div className="relative w-full max-w-sm bg-[#0F1626] border border-slate-800 rounded-2xl p-6 space-y-4 shadow-2xl">
-            <h3 className="text-base font-bold text-white">Reset Password</h3>
-            <p className="text-xs text-slate-400">
-              Enter your email address and we will send you a password recovery link.
-            </p>
-            <form onSubmit={handleForgotSubmit} className="space-y-3">
-              <input
-                type="email"
-                required
-                value={forgotEmail}
-                onChange={e => setForgotEmail(e.target.value)}
-                placeholder="name@example.com"
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
-              />
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setForgotModalOpen(false)}
-                  className="flex-1 py-2 rounded-lg bg-slate-800 text-xs text-slate-300 font-semibold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2 rounded-lg bg-[#FF1B6B] text-xs text-white font-bold"
-                >
-                  Send Reset Link
-                </button>
-              </div>
-            </form>
+          <div className="relative w-full max-w-md bg-[#0F1626] border border-slate-800 rounded-2xl p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white">Reset Password</h3>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                {forgotStep === 'request' ? 'Step 1 of 2' : 'Step 2 of 2'}
+              </span>
+            </div>
+
+            {forgotStep === 'request' ? (
+              <form onSubmit={handleForgotRequestSubmit} className="space-y-3">
+                <p className="text-xs text-slate-400">
+                  Enter your account username or email address (e.g. <span className="text-slate-200">admin</span> or <span className="text-slate-200">admin@streamallow.com</span>) to generate a one-time 15-minute reset token.
+                </p>
+                <input
+                  type="text"
+                  required
+                  value={forgotEmail}
+                  onChange={e => setForgotEmail(e.target.value)}
+                  placeholder="Username or email address"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
+                />
+                <div className="flex items-center justify-between text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setForgotStep('reset')}
+                    className="text-[#FF1B6B] hover:underline"
+                  >
+                    Already have a reset token or recovery key?
+                  </button>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setForgotModalOpen(false)}
+                    className="flex-1 py-2 rounded-lg bg-slate-800 text-xs text-slate-300 font-semibold"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={forgotLoading}
+                    className="flex-1 py-2 rounded-lg bg-[#FF1B6B] text-xs text-white font-bold disabled:opacity-50"
+                  >
+                    {forgotLoading ? 'Generating...' : 'Generate Reset Token'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleResetConfirmSubmit} className="space-y-3">
+                {forgotStatusMsg && (
+                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-700 text-[11px] text-slate-300 leading-relaxed">
+                    {forgotStatusMsg}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-300 mb-1">Account Username or Email</label>
+                  <input
+                    type="text"
+                    value={forgotEmail}
+                    onChange={e => setForgotEmail(e.target.value)}
+                    placeholder="admin@streamallow.com"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-slate-300 font-medium">
+                    {useRecoveryKey ? 'Server Recovery Key (ADMIN_RESET_KEY)' : 'Verification Reset Token'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setUseRecoveryKey(prev => !prev)}
+                    className="text-[#FF1B6B] hover:underline"
+                  >
+                    {useRecoveryKey ? 'Use Reset Token instead' : 'Use Server Recovery Key'}
+                  </button>
+                </div>
+
+                {useRecoveryKey ? (
+                  <input
+                    type="password"
+                    required
+                    value={recoveryKeyInput}
+                    onChange={e => setRecoveryKeyInput(e.target.value)}
+                    placeholder="Enter server ADMIN_RESET_KEY"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    required
+                    value={resetTokenInput}
+                    onChange={e => setResetTokenInput(e.target.value)}
+                    placeholder="Paste 48-char reset token from server logs/email"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-[#FF1B6B]"
+                  />
+                )}
+
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-300 mb-1">New Password (min 6 chars)</label>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={resetNewPassword}
+                    onChange={e => setResetNewPassword(e.target.value)}
+                    placeholder="Enter new strong password"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-300 mb-1">Confirm New Password</label>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={resetConfirmPassword}
+                    onChange={e => setResetConfirmPassword(e.target.value)}
+                    placeholder="Confirm new password"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setForgotStep('request')}
+                    className="px-3 py-2 rounded-lg bg-slate-800 text-xs text-slate-300 font-semibold"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForgotModalOpen(false)}
+                    className="px-3 py-2 rounded-lg bg-slate-800 text-xs text-slate-300 font-semibold"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={forgotLoading}
+                    className="flex-1 py-2 rounded-lg bg-[#FF1B6B] text-xs text-white font-bold disabled:opacity-50"
+                  >
+                    {forgotLoading ? 'Updating...' : 'Set New Password'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

@@ -18,7 +18,6 @@ import {
   HomepageDemoConfig
 } from '../types';
 import {
-  INITIAL_USERS,
   INITIAL_STREAMS,
   INITIAL_PLAYLISTS,
   INITIAL_CHANNELS,
@@ -32,6 +31,7 @@ import {
   INITIAL_SYSTEM_SETTINGS,
   DEFAULT_PAYMENT_GATEWAY_SETTINGS
 } from '../data/mockData';
+import { setUploadAuthToken } from '../utils/chunkedUpload';
 
 export interface ToastMessage {
   id: string;
@@ -50,6 +50,7 @@ interface AppContextType {
   formatPrice: (amountUSD: number, amountBDT: number) => string;
 
   // Auth / Current User
+  authToken: string | null;
   currentUser: User | null;
   setCurrentUser: (u: User | null) => void;
   adminImpersonatorUser: User | null;
@@ -58,6 +59,7 @@ interface AppContextType {
   switchRole: (role: UserRole | 'guest') => void;
   login: (email: string, pass: string) => Promise<boolean>;
   register: (name: string, email: string, pass: string, planChoice?: string) => Promise<boolean>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
   logout: () => void;
 
   // Data collections & mutations
@@ -201,15 +203,18 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | null>(null);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Navigation: Default to Main Dashboard directly as requested by user
+  // Navigation: Strictly start on public website unless explicitly navigating a public route
   const [currentPath, setCurrentPath] = useState<string>(() => {
     try {
       const hash = window.location.hash.replace(/^#\/?/, '');
-      if (hash && (hash.startsWith('user/') || hash.startsWith('admin/') || hash.startsWith('public/'))) {
+      if (hash && hash.startsWith('public/')) {
         return hash;
       }
+      if (hash && (hash.startsWith('user/') || hash.startsWith('admin/'))) {
+        return 'public/login';
+      }
     } catch {}
-    return 'admin/dashboard';
+    return 'public/home';
   });
 
   // Currency (BDT is default as requested)
@@ -217,57 +222,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [stoppingStreamIds, setStoppingStreamIds] = useState<string[]>([]);
   const stopInFlightRef = useRef<Map<string, Promise<boolean>>>(new Map());
 
-  // Auth User: Default to Super Admin to immediately launch the main Dashboard
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    try {
-      const stored = localStorage.getItem('streamjoin_current_user');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed && typeof parsed === 'object' && parsed.id) return parsed;
-      }
-    } catch (e) {
-      // ignore
-    }
-    return INITIAL_USERS[0];
-  });
+  // In-memory JWT & Authenticated User State (NEVER persisted in localStorage/sessionStorage to guarantee zero auto-login)
+  const [authToken, setAuthTokenState] = useState<string | null>(null);
+  const authTokenRef = useRef<string | null>(null);
+  const setAuthToken = (tok: string | null) => {
+    const clean = tok && tok.trim() ? tok.trim() : null;
+    authTokenRef.current = clean;
+    setAuthTokenState(clean);
+    setUploadAuthToken(clean);
+  };
 
-  useEffect(() => {
-    try {
-      if (currentUser) {
-        localStorage.setItem('streamjoin_current_user', JSON.stringify(currentUser));
-      } else {
-        localStorage.removeItem('streamjoin_current_user');
-      }
-    } catch (e) {
-      // ignore
-    }
-  }, [currentUser]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [adminImpersonatorUser, setAdminImpersonatorUser] = useState<User | null>(null);
 
-  // Admin Impersonator State (When admin logs in as a user to visit/test their dashboard)
-  const [adminImpersonatorUser, setAdminImpersonatorUser] = useState<User | null>(() => {
-    try {
-      const stored = localStorage.getItem('streamjoin_impersonator');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed && typeof parsed === 'object' && parsed.id) return parsed;
-      }
-    } catch (e) {
-      // ignore
+  const getAuthHeaders = (extra?: Record<string, string>, tokenOverride?: string): Record<string, string> => {
+    const headers: Record<string, string> = { ...(extra || {}) };
+    const tok = tokenOverride ?? authTokenRef.current;
+    if (tok) {
+      headers['Authorization'] = `Bearer ${tok}`;
     }
-    return null;
-  });
+    return headers;
+  };
 
-  useEffect(() => {
-    try {
-      if (adminImpersonatorUser) {
-        localStorage.setItem('streamjoin_impersonator', JSON.stringify(adminImpersonatorUser));
-      } else {
-        localStorage.removeItem('streamjoin_impersonator');
-      }
-    } catch (e) {
-      // ignore
+  // Clear any legacy auth/cache keys so old sessions never trigger auto-login
+  const clearLegacyAuthStorage = () => {
+    const legacyKeys = [
+      'streamjoin_token',
+      'streamjoin_current_user',
+      'streamjoin_impersonator',
+      'streamjoin_users_data',
+      'streamjoin_streams_cache'
+    ];
+    for (const key of legacyKeys) {
+      try { localStorage.removeItem(key); } catch {}
+      try { sessionStorage.removeItem(key); } catch {}
     }
-  }, [adminImpersonatorUser]);
+  };
 
   // Helper to strictly deduplicate users by ID and unique email
   const deduplicateUsers = (list: User[]): User[] => {
@@ -285,30 +275,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return Array.from(byId.values());
   };
 
-  // Data states with localStorage persistence for newly registered/created users
-  const [users, setUsers] = useState<User[]>(() => {
-    try {
-      const stored = localStorage.getItem('streamjoin_users_data');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const validParsed = parsed.filter((u): u is User => Boolean(u && typeof u === 'object' && u.id));
-          return deduplicateUsers([...validParsed, ...INITIAL_USERS]);
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to parse cached users:', e);
-    }
-    return deduplicateUsers(INITIAL_USERS);
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('streamjoin_users_data', JSON.stringify(users));
-    } catch (e) {
-      console.warn('Failed to cache users:', e);
-    }
-  }, [users]);
+  const [users, setUsers] = useState<User[]>([]);
 
   // Safe response parser to prevent "Rate exceeded" JSON parse errors
   const safeParseResponse = async (res: Response): Promise<any> => {
@@ -323,36 +290,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Synchronize users from PostgreSQL backend database (with strict 2.5s timeout)
-  const fetchUsers = async (): Promise<User[] | undefined> => {
+  // Synchronize users from PostgreSQL backend database (strictly requires authenticated admin JWT)
+  const fetchUsers = async (tokenOverride?: string): Promise<User[] | undefined> => {
+    const tok = tokenOverride ?? authTokenRef.current;
+    if (!tok) return undefined;
+
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 2500);
 
-      const token = localStorage.getItem('streamjoin_token');
-      const headers: Record<string, string> = {
-        'x-admin-role': 'super_admin'
-      };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-      const res = await fetch('/api/admin/users', { headers, signal: controller.signal });
+      const res = await fetch('/api/admin/users', {
+        headers: getAuthHeaders(undefined, tok),
+        signal: controller.signal
+      });
       clearTimeout(timeoutId);
       if (res.ok) {
         const data = await safeParseResponse(res);
-        if (data.success && Array.isArray(data.users) && data.users.length > 0) {
+        if (data.success && Array.isArray(data.users)) {
           const serverUsers: User[] = deduplicateUsers(data.users);
           setUsers(serverUsers);
-          try {
-            localStorage.setItem('streamjoin_users_data', JSON.stringify(serverUsers));
-          } catch {}
 
-          // Sync currentUser if present
           setCurrentUser(curr => {
             if (!curr) return curr;
             const found = serverUsers.find((u: User) => (u.id === curr.id || (u.email && curr.email && u.email.toLowerCase() === curr.email.toLowerCase())));
             if (found) {
-              const updated = {
+              return {
                 ...curr,
                 status: found.status,
                 plan: found.plan,
@@ -362,10 +324,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 renewalDate: found.renewalDate,
                 expiresAt: found.expiresAt
               };
-              try {
-                localStorage.setItem('streamjoin_current_user', JSON.stringify(updated));
-              } catch {}
-              return updated;
             }
             return curr;
           });
@@ -376,85 +334,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err) {
       console.warn('[PostgreSQL Users Sync] Error:', err);
     }
+    return undefined;
   };
 
   const prevPathRef = useRef(currentPath);
 
   useEffect(() => {
-    fetchUsers();
+    clearLegacyAuthStorage();
   }, []);
 
   useEffect(() => {
     if (prevPathRef.current === currentPath) return;
     prevPathRef.current = currentPath;
-    if (currentPath === 'admin/users' || currentPath === 'admin/dashboard' || currentPath === 'admin/streams') {
+    if (
+      authTokenRef.current &&
+      currentUser &&
+      ['super_admin', 'admin', 'manager', 'finance_manager', 'support_manager'].includes(currentUser.role) &&
+      (currentPath === 'admin/users' || currentPath === 'admin/dashboard' || currentPath === 'admin/streams' || currentPath === 'admin/payments')
+    ) {
       fetchUsers();
     }
-  }, [currentPath]);
+  }, [currentPath, currentUser?.role]);
 
-  // Dedicated token helper ensuring authenticated session is never lost across refresh or reboot
-  const ensureValidToken = async (): Promise<string | null> => {
-    let token = localStorage.getItem('streamjoin_token');
-    if (token) return token;
-
-    if (currentUser?.email) {
-      try {
-        const loginRes = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: currentUser.email,
-            password: (currentUser.role === 'super_admin' || currentUser.role === 'admin') ? 'admin1234' : 'user1234'
-          })
-        });
-        const loginData = await loginRes.json();
-        if (loginData?.success && loginData?.token) {
-          const freshToken: string = loginData.token;
-          localStorage.setItem('streamjoin_token', freshToken);
-          if (loginData.user) {
-            setCurrentUser(loginData.user);
-            try {
-              localStorage.setItem('streamjoin_current_user', JSON.stringify(loginData.user));
-            } catch {}
-          }
-          return freshToken;
-        }
-      } catch (err) {
-        console.warn('[Session Token] Auto-authentication notice:', err);
-      }
-    }
-    return null;
-  };
-
-  const [streams, setStreams] = useState<StreamItem[]>(() => {
-    try {
-      const cached = localStorage.getItem('streamjoin_streams_cache');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    return [];
-  });
-
+  const [streams, setStreams] = useState<StreamItem[]>([]);
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
   const [userMedia, setUserMedia] = useState<any[]>([]);
 
   const fetchPlaylists = async (tokenOverride?: string): Promise<PlaylistItem[] | undefined> => {
-    try {
-      let token = tokenOverride || localStorage.getItem('streamjoin_token');
-      if (!token) {
-        token = (await ensureValidToken()) || '';
-      }
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      } else if (currentUser) {
-        headers['x-user-id'] = currentUser.id;
-        if (currentUser.role === 'super_admin') headers['x-admin-role'] = 'super_admin';
-      }
+    const token = tokenOverride ?? authTokenRef.current;
+    if (!token) return undefined;
 
-      const res = await fetch('/api/playlists', { headers });
+    try {
+      const res = await fetch('/api/playlists', {
+        headers: getAuthHeaders(undefined, token)
+      });
       if (res.ok) {
         const data = await safeParseResponse(res);
         if (data.success && Array.isArray(data.playlists)) {
@@ -495,26 +408,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err) {
       console.warn('fetchPlaylists error:', err);
     }
+    return undefined;
   };
 
   const fetchStreams = async (tokenOverride?: string): Promise<StreamItem[] | undefined> => {
+    const token = tokenOverride ?? authTokenRef.current;
+    if (!token) return undefined;
+
     try {
-      let token = tokenOverride || localStorage.getItem('streamjoin_token');
-      if (!token) {
-        token = (await ensureValidToken()) || '';
-      }
-
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      } else if (currentUser) {
-        headers['x-user-id'] = currentUser.id;
-        if (currentUser.role === 'super_admin') {
-          headers['x-admin-role'] = 'super_admin';
-        }
-      }
-
-      const res = await fetch('/api/streams', { headers });
+      const res = await fetch('/api/streams', {
+        headers: getAuthHeaders(undefined, token)
+      });
       if (res.ok) {
         const data = await safeParseResponse(res);
         if (data.success && Array.isArray(data.streams)) {
@@ -540,32 +444,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             totalTracks: typeof s.totalTracks === 'number' ? s.totalTracks : undefined
           }));
           setStreams(loaded);
-          try {
-            localStorage.setItem('streamjoin_streams_cache', JSON.stringify(loaded));
-          } catch {}
           return loaded;
         }
       }
     } catch (err) {
       console.warn('fetchStreams error:', err);
     }
+    return undefined;
   };
 
   const fetchMedia = async (tokenOverride?: string): Promise<any[] | undefined> => {
-    try {
-      let token = tokenOverride || localStorage.getItem('streamjoin_token');
-      if (!token) {
-        token = (await ensureValidToken()) || '';
-      }
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      } else if (currentUser) {
-        headers['x-user-id'] = currentUser.id;
-        if (currentUser.role === 'super_admin') headers['x-admin-role'] = 'super_admin';
-      }
+    const token = tokenOverride ?? authTokenRef.current;
+    if (!token) return undefined;
 
-      const res = await fetch('/api/media', { headers });
+    try {
+      const res = await fetch('/api/media', {
+        headers: getAuthHeaders(undefined, token)
+      });
       if (res.ok) {
         const data = await safeParseResponse(res);
         if (data.success && Array.isArray(data.media)) {
@@ -576,19 +471,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err) {
       console.warn('fetchMedia error:', err);
     }
+    return undefined;
   };
 
   const deleteMedia = async (id: string): Promise<boolean> => {
-    let token = localStorage.getItem('streamjoin_token');
-    if (!token) {
-      token = (await ensureValidToken()) || '';
+    if (!authTokenRef.current) {
+      showToast('Authentication required. Please login.', 'error');
+      return false;
     }
     try {
       const res = await fetch(`/api/media/${id}`, {
         method: 'DELETE',
-        headers: {
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        }
+        headers: getAuthHeaders()
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -604,67 +498,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Restore authenticated session and PostgreSQL records on mount
+  // Periodically synchronize streams state ONLY when authenticated
   useEffect(() => {
-    const restoreSession = async () => {
-      let token = localStorage.getItem('streamjoin_token');
-      if (!token && currentUser?.email) {
-        token = (await ensureValidToken()) || '';
-      }
-
-      if (token) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2500);
-
-          const res = await fetch('/api/auth/me', {
-            headers: { 'Authorization': `Bearer ${token}` },
-            signal: controller.signal
-          });
-          clearTimeout(timeoutId);
-
-          if (res.ok) {
-            const data = await res.json();
-            if (data.success && data.user) {
-              setCurrentUser(data.user);
-              try {
-                localStorage.setItem('streamjoin_current_user', JSON.stringify(data.user));
-              } catch {}
-              await Promise.allSettled([
-                fetchPlaylists(token),
-                fetchStreams(token),
-                fetchMedia(token)
-              ]);
-              return;
-            }
-          } else if (res.status === 401 || res.status === 403) {
-            try {
-              localStorage.removeItem('streamjoin_token');
-            } catch {}
-          }
-        } catch (err) {
-          console.warn('Session restore notice:', err);
-        }
-      }
-
-      // If token is missing, still load data from PostgreSQL
-      await Promise.allSettled([
-        fetchPlaylists(),
-        fetchStreams(),
-        fetchMedia()
-      ]);
-    };
-
-    restoreSession();
-  }, []);
-
-  // Periodically synchronize streams state (e.g. when Admin stops a stream or live status updates)
-  useEffect(() => {
+    if (!authToken || !currentUser) return;
     const streamInterval = setInterval(() => {
-      fetchStreams().catch(() => {});
+      if (authTokenRef.current) {
+        fetchStreams().catch(() => {});
+      }
     }, 4000);
     return () => clearInterval(streamInterval);
-  }, []);
+  }, [authToken, currentUser?.id]);
 
   const [channels, setChannels] = useState<YouTubeChannel[]>(INITIAL_CHANNELS);
   const [plans, setPlans] = useState<SubscriptionPlan[]>(SUBSCRIPTION_PLANS);
@@ -733,15 +576,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem('streamjoin_gateway_settings', JSON.stringify(updated));
     } catch {}
     try {
-      await fetch('/api/system/gateway-settings', {
+      const res = await fetch('/api/system/gateway-settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(updated)
       });
-      showToast('Payment gateway numbers and instructions saved successfully!', 'success');
-      logActivity('Updated payment gateway numbers & QR settings', 'admin');
+      if (res.ok) {
+        showToast('Payment gateway numbers and instructions saved successfully!', 'success');
+        logActivity('Updated payment gateway numbers & QR settings', 'admin');
+      } else {
+        showToast('Authorization required to update payment gateway settings.', 'error');
+      }
     } catch (err) {
-      showToast('Settings saved locally.', 'info');
+      showToast('Failed to reach server to save payment gateway settings.', 'error');
     }
   };
 
@@ -836,229 +683,95 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActivityLogs(prev => [newLog, ...prev]);
   };
 
-  // Switch role helper for live testing of all RBAC levels & view switching
+  // Role switching helper: 'guest' triggers full logout; unauthenticated elevation is disabled
   const switchRole = (role: UserRole | 'guest') => {
     if (role === 'guest') {
-      setCurrentUser(null);
-      navigate('public/home');
-      showToast('Switched to Guest (Logged out)', 'info');
+      logout();
       return;
     }
-
-    if (role === 'super_admin' || role === 'admin' || role === 'manager' || role === 'finance_manager' || role === 'support_manager') {
-      const adminUser: User = {
-        id: 'admin-1',
-        name: role === 'super_admin' ? 'Super Admin' : role.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()),
-        email: `${role}@streamallow.com`,
-        role: role,
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-        plan: 'Business',
-        status: 'Active',
-        joinedDate: 'Oct 01, 2026',
-        channelsCount: 15,
-        totalViews: '2.5M'
-      };
-      setCurrentUser(adminUser);
-      navigate('admin/dashboard');
-      showToast(`Switched to ${adminUser.name} mode`, 'success');
-      logActivity(`Switched role to ${role}`, 'admin');
-    } else {
-      const user = INITIAL_USERS.find(u => u.role === 'user') || INITIAL_USERS[1] || INITIAL_USERS[0]; // Fahim Ahmed
-      setCurrentUser(user);
-      navigate('user/dashboard');
-      showToast(`Switched to User Dashboard (${user.name})`, 'success');
-      logActivity('User dashboard access', 'user');
-    }
+    showToast('Direct role switching is disabled. Please sign in with valid credentials.', 'error');
   };
 
-  // Impersonate / Visit user account from Admin
+  // Impersonate / Visit user account from Admin (requires active verified admin session; memory-only)
   const impersonateUser = (targetUser: User) => {
+    if (!currentUser || !['super_admin', 'admin', 'manager'].includes(currentUser.role) || !authTokenRef.current) {
+      showToast('Admin authentication is required.', 'error');
+      return;
+    }
     if (!adminImpersonatorUser) {
-      const adminToSave = currentUser && ['super_admin', 'admin', 'manager'].includes(currentUser.role)
-        ? currentUser
-        : users.find(u => u.role === 'super_admin') || {
-            id: 'u-admin',
-            name: 'Super Admin',
-            email: 'admin@streamallow.com',
-            role: 'super_admin' as const,
-            avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-            plan: 'Business' as const,
-            status: 'Active' as const,
-            joinedDate: 'Oct 01, 2026',
-            channelsCount: 15,
-            totalViews: '2.5M'
-          };
-      setAdminImpersonatorUser(adminToSave);
-      try {
-        localStorage.setItem('streamjoin_impersonator', JSON.stringify(adminToSave));
-      } catch (e) {
-        // ignore
-      }
+      setAdminImpersonatorUser(currentUser);
     }
 
     setCurrentUser(targetUser);
-    try {
-      localStorage.setItem('streamjoin_current_user', JSON.stringify(targetUser));
-    } catch (e) {
-      // ignore
-    }
     navigate('user/dashboard');
     showToast(`Logged in as ${targetUser.name} (${targetUser.email}). You can return to Admin at any time.`, 'info');
     logActivity(`Admin visited user account (${targetUser.email})`, 'admin');
   };
 
   const exitImpersonation = () => {
-    const admin = adminImpersonatorUser || users.find(u => u.role === 'super_admin') || {
-      id: 'u-admin',
-      name: 'Super Admin',
-      email: 'admin@streamallow.com',
-      role: 'super_admin' as const,
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-      plan: 'Business' as const,
-      status: 'Active' as const,
-      joinedDate: 'Oct 01, 2026',
-      channelsCount: 15,
-      totalViews: '2.5M'
-    };
-
-    setCurrentUser(admin);
-    setAdminImpersonatorUser(null);
-    try {
-      localStorage.setItem('streamjoin_current_user', JSON.stringify(admin));
-      localStorage.removeItem('streamjoin_impersonator');
-    } catch (e) {
-      // ignore
+    if (!adminImpersonatorUser) {
+      logout();
+      return;
     }
+
+    setCurrentUser(adminImpersonatorUser);
+    setAdminImpersonatorUser(null);
     navigate('admin/users');
     showToast('Returned back to Admin Account.', 'success');
     logActivity('Exited user visit and returned to Admin Dashboard', 'admin');
   };
 
   const login = async (email: string, pass: string): Promise<boolean> => {
-    const rawInput = (email || '').trim().toLowerCase();
-    const normalizedEmail = rawInput === 'admin' ? 'admin@streamallow.com' : rawInput;
+    const rawIdentifier = (email || '').trim();
     const trimmedPass = (pass || '').trim();
 
-    if (!normalizedEmail || !trimmedPass) {
-      showToast('Please enter both email/username and password.', 'error');
+    if (!rawIdentifier || !trimmedPass) {
+      showToast('Please enter both username/email and password.', 'error');
       return false;
     }
 
-    // Known account lookup helper for resilient fallback
-    const findCachedUser = () => {
-      const allKnown = [...users, ...INITIAL_USERS];
-      return allKnown.find(u => {
-        const uEmail = (u.email || '').toLowerCase();
-        return uEmail === normalizedEmail || (normalizedEmail === 'admin@streamallow.com' && (u.role === 'super_admin' || u.role === 'admin'));
-      });
-    };
-
-    const isPasswordValidForUser = (targetUser: User | undefined) => {
-      if (!targetUser) return false;
-      const p = trimmedPass.toLowerCase();
-      if (targetUser.role === 'super_admin' || targetUser.role === 'admin') {
-        return p === 'admin1234' || p === 'admin123' || p === 'admin' || targetUser.password === trimmedPass;
-      }
-      return p === 'user123' || p === 'user1234' || p === 'user' || targetUser.password === trimmedPass;
-    };
-
     try {
-      let isRateExceeded = false;
-      let rawText = '';
-      let data: any = null;
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: rawIdentifier, password: trimmedPass })
+      });
 
-      try {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: normalizedEmail, password: trimmedPass })
-        });
+      const data = await safeParseResponse(res);
 
-        rawText = await res.text();
-        if (res.status === 429 || rawText.includes('Rate exceeded')) {
-          isRateExceeded = true;
-        } else {
-          try {
-            data = JSON.parse(rawText);
-          } catch {
-            data = null;
-          }
-        }
+      if (res.ok && data?.success && data?.user && data?.token) {
+        const { user, token } = data;
+        setAuthToken(token);
+        setCurrentUser(user);
+        setAdminImpersonatorUser(null);
 
-        if (res.ok && data?.success && data?.user && data?.token) {
-          const { user, token } = data;
-          localStorage.setItem('streamjoin_token', token);
-          localStorage.setItem('streamjoin_current_user', JSON.stringify(user));
-          setCurrentUser(user);
+        const isAdminRole = ['super_admin', 'admin', 'manager', 'finance_manager', 'support_manager'].includes(user.role);
+        await Promise.allSettled([
+          fetchPlaylists(token),
+          fetchStreams(token),
+          fetchMedia(token),
+          isAdminRole ? fetchUsers(token) : Promise.resolve()
+        ]);
 
-          // Load user-isolated data from PostgreSQL
-          await Promise.all([
-            fetchPlaylists(token),
-            fetchStreams(token),
-            fetchMedia(token)
-          ]);
-
-          if (user.role === 'super_admin' || user.role === 'admin') {
-            navigate('admin/dashboard');
-          } else {
-            navigate('user/dashboard');
-          }
-
-          showToast(`Welcome back, ${user.name}!`, 'success');
-          logActivity(`${user.name} logged in`, 'login');
-          return true;
-        }
-      } catch (fetchErr) {
-        console.warn('Network or proxy fetch error during login:', fetchErr);
-        isRateExceeded = true;
-      }
-
-      // If server returned a standard invalid credentials response (not rate limited)
-      if (data && !data.success && !isRateExceeded) {
-        // Double check against standard demo accounts before giving up
-        const cached = findCachedUser();
-        if (cached && isPasswordValidForUser(cached)) {
-          // Allow login for verified demo accounts
-        } else {
-          showToast(data.message || 'Invalid email or password.', 'error');
-          return false;
-        }
-      }
-
-      // RESILIENT FALLBACK: If rate exceeded or network throttled, authenticate against verified user database
-      const fallbackUser = findCachedUser();
-      if (fallbackUser && isPasswordValidForUser(fallbackUser)) {
-        const fallbackToken = 'jwt_sess_' + btoa(JSON.stringify({
-          id: fallbackUser.id,
-          name: fallbackUser.name,
-          email: fallbackUser.email,
-          role: fallbackUser.role,
-          time: Date.now()
-        }));
-
-        localStorage.setItem('streamjoin_token', fallbackToken);
-        localStorage.setItem('streamjoin_current_user', JSON.stringify(fallbackUser));
-        setCurrentUser(fallbackUser);
-
-        if (fallbackUser.role === 'super_admin' || fallbackUser.role === 'admin') {
+        if (isAdminRole) {
           navigate('admin/dashboard');
         } else {
           navigate('user/dashboard');
         }
 
-        showToast(`Welcome back, ${fallbackUser.name}! (Logged in successfully)`, 'success');
-        logActivity(`${fallbackUser.name} logged in`, 'login');
+        showToast(`Welcome back, ${user.name}!`, 'success');
+        logActivity(`${user.name} logged in`, 'login');
         return true;
       }
 
-      if (isRateExceeded) {
-        showToast('Too many requests from proxy. Please wait a moment and try again.', 'error');
+      if (data?.rateExceeded) {
+        showToast('Too many login requests. Please wait a moment and try again.', 'error');
       } else {
-        showToast('Invalid email or password.', 'error');
+        showToast(data?.message || 'Invalid username/email or password.', 'error');
       }
       return false;
     } catch (err: any) {
-      showToast(`Login failed: ${err.message}`, 'error');
+      showToast(`Login failed: ${err?.message || 'Network error'}`, 'error');
       return false;
     }
   };
@@ -1072,117 +785,95 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('Please enter email and password to register.', 'error');
       return false;
     }
+    if (trimmedPass.length < 6) {
+      showToast('Password must be at least 6 characters long.', 'error');
+      return false;
+    }
 
     try {
-      let data: any = null;
-      let rawText = '';
-      let isRateExceeded = false;
-
-      try {
-        const res = await fetch('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: name.trim() || normalizedEmail.split('@')[0],
-            email: normalizedEmail,
-            password: trimmedPass,
-            plan: assignedPlan
-          })
-        });
-
-        rawText = await res.text();
-        if (res.status === 429 || rawText.includes('Rate exceeded')) {
-          isRateExceeded = true;
-        } else {
-          try {
-            data = JSON.parse(rawText);
-          } catch {
-            data = null;
-          }
-        }
-
-        if (res.ok && data?.success && data?.user && data?.token) {
-          const { user, token } = data;
-          localStorage.setItem('streamjoin_token', token);
-          localStorage.setItem('streamjoin_current_user', JSON.stringify(user));
-          setCurrentUser(user);
-
-          // Fresh user starts with clean empty playlists, streams, and media
-          setPlaylists([]);
-          setStreams([]);
-          setUserMedia([]);
-
-          navigate('user/dashboard');
-          showToast('Registration successful! Welcome to Stream Allow.', 'success');
-          logActivity(`New User Registered: ${user.name}`, 'user');
-          fetchUsers();
-          return true;
-        }
-      } catch (fetchErr) {
-        console.warn('Network or proxy fetch error during register:', fetchErr);
-        isRateExceeded = true;
-      }
-
-      // Resilient fallback registration if proxy is rate limited
-      if (isRateExceeded || !data) {
-        const newId = 'u_' + Date.now().toString(16);
-        const userName = name.trim() || normalizedEmail.split('@')[0];
-        const localNewUser: User = {
-          id: newId,
-          name: userName,
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim() || normalizedEmail.split('@')[0],
           email: normalizedEmail,
           password: trimmedPass,
-          role: 'user',
-          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-          plan: assignedPlan,
-          status: 'Inactive',
-          joinedDate: 'Today',
-          channelsCount: 0,
-          totalViews: '0',
-          usedStorageGB: 0,
-          maxStorageGB: 5,
-          renewalDate: 'Activation Pending',
-          renewalDaysLeft: 0
-        };
+          plan: assignedPlan
+        })
+      });
 
-        const sessionToken = 'jwt_sess_' + btoa(JSON.stringify({
-          id: newId,
-          name: userName,
-          email: normalizedEmail,
-          role: 'user',
-          time: Date.now()
-        }));
+      const data = await safeParseResponse(res);
 
-        setUsers(prev => [localNewUser, ...prev]);
-        localStorage.setItem('streamjoin_token', sessionToken);
-        localStorage.setItem('streamjoin_current_user', JSON.stringify(localNewUser));
-        setCurrentUser(localNewUser);
+      if (res.ok && data?.success && data?.user && data?.token) {
+        const { user, token } = data;
+        setAuthToken(token);
+        setCurrentUser(user);
+        setAdminImpersonatorUser(null);
 
+        // Fresh user starts with clean empty playlists, streams, and media
         setPlaylists([]);
         setStreams([]);
         setUserMedia([]);
 
         navigate('user/dashboard');
         showToast('Registration successful! Welcome to Stream Allow.', 'success');
-        logActivity(`New User Registered: ${localNewUser.name}`, 'user');
+        logActivity(`New User Registered: ${user.name}`, 'user');
         return true;
       }
 
-      showToast(data.message || 'Registration failed.', 'error');
+      showToast(data?.message || 'Registration failed.', 'error');
       return false;
     } catch (err: any) {
-      showToast(`Registration failed: ${err.message}`, 'error');
+      showToast(`Registration failed: ${err?.message || 'Network error'}`, 'error');
+      return false;
+    }
+  };
+
+  const changePassword = async (currentPassword: string, newPassword: string): Promise<boolean> => {
+    const token = authTokenRef.current;
+    if (!token) {
+      showToast('Please login to change your password.', 'error');
+      return false;
+    }
+
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ currentPassword, newPassword })
+      });
+      const data = await safeParseResponse(res);
+      if (res.ok && data?.success) {
+        if (data.token) {
+          setAuthToken(data.token);
+        }
+        showToast(data.message || 'Password updated securely!', 'success');
+        logActivity('Account password updated securely', currentUser?.role === 'user' ? 'user' : 'admin');
+        return true;
+      }
+      showToast(data?.message || 'Failed to update password.', 'error');
+      return false;
+    } catch (err: any) {
+      showToast(`Failed to update password: ${err?.message || 'Network error'}`, 'error');
       return false;
     }
   };
 
   const logout = () => {
+    const token = authTokenRef.current;
+    if (token) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      }).catch(() => {});
+    }
+
     logActivity('User Logout', 'login');
-    localStorage.removeItem('streamjoin_token');
-    localStorage.removeItem('streamjoin_current_user');
-    localStorage.removeItem('streamjoin_impersonator');
+    setAuthToken(null);
+    clearLegacyAuthStorage();
     setCurrentUser(null);
     setAdminImpersonatorUser(null);
+    setUsers([]);
     setPlaylists([]);
     setStreams([]);
     setUserMedia([]);
@@ -1192,6 +883,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Data mutators
   const addUser = async (userData: Partial<User>) => {
+    if (!authTokenRef.current) {
+      showToast('Admin authentication required.', 'error');
+      return;
+    }
+
     const durationDays = Math.max(1, Number(userData.planDurationDays || 30) || 30);
     const now = new Date();
     const expiry = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
@@ -1200,44 +896,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const maxGB = userData.plan === 'Business' ? 100 : userData.plan === 'Pro' ? 25 : 5;
     const normalizedEmail = (userData.email || 'user@example.com').trim().toLowerCase();
-    const tempUser: User = {
-      id: `u-${Date.now()}`,
-      name: userData.name || 'New Creator',
-      email: normalizedEmail,
-      password: userData.password || 'user1234',
-      role: userData.role || 'user',
-      avatar: userData.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-      plan: userData.plan || 'Basic',
-      status: userData.status || 'Active',
-      joinedDate: userData.joinedDate || formatDate(now),
-      channelsCount: userData.channelsCount || 0,
-      totalViews: userData.totalViews || '0',
-      usedStorageGB: userData.usedStorageGB !== undefined ? userData.usedStorageGB : 0.0,
-      maxStorageGB: userData.maxStorageGB !== undefined ? userData.maxStorageGB : maxGB,
-      subscriptionStartDate: now.toISOString(),
-      planDurationDays: durationDays,
-      renewalDate: formatDate(expiry),
-      renewalDaysLeft: durationDays,
-      expiresAt: expiry.toISOString()
-    };
 
     try {
-      const token = await ensureValidToken();
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'x-admin-role': 'super_admin'
-      };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
       const res = await fetch('/api/admin/users', {
         method: 'POST',
-        headers,
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
-          name: tempUser.name,
-          email: tempUser.email,
-          plan: tempUser.plan,
-          password: tempUser.password,
-          durationDays
+          name: userData.name || 'New Creator',
+          email: normalizedEmail,
+          plan: userData.plan || 'Basic',
+          password: userData.password || undefined,
+          durationDays,
+          maxStorageGB: maxGB,
+          joinedDate: formatDate(now),
+          expiresAt: expiry.toISOString()
         })
       });
       const data = await safeParseResponse(res);
@@ -1248,15 +920,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await fetchUsers();
         return;
       }
-      if (!res.ok && data?.message) {
-        showToast(data.message, 'error');
-        return;
-      }
-    } catch {}
-
-    setUsers(prev => deduplicateUsers([tempUser, ...prev]));
-    showToast(`User ${tempUser.name} added successfully!`, 'success');
-    logActivity(`Created user ${tempUser.email}`, 'admin');
+      showToast(data?.message || 'Failed to add user.', 'error');
+    } catch (err: any) {
+      showToast(`Failed to add user: ${err?.message || 'Network error'}`, 'error');
+    }
   };
 
   const renewUserPlan = async (id: string, days: number = 30) => {
@@ -1277,50 +944,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         expiresAt: serverUser?.expiresAt || expiresAtIso
       };
 
-      setUsers(prev => {
-        const updated = prev.map(u => (u.id === id ? { ...u, ...mergedFields } : u));
-        try {
-          localStorage.setItem('streamjoin_users_data', JSON.stringify(updated));
-        } catch {}
-        return updated;
-      });
-
-      setCurrentUser(curr => {
-        if (curr && curr.id === id) {
-          const updated = { ...curr, ...mergedFields };
-          try {
-            localStorage.setItem('streamjoin_current_user', JSON.stringify(updated));
-          } catch {}
-          return updated;
-        }
-        return curr;
-      });
+      setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...mergedFields } : u)));
+      setCurrentUser(curr => (curr && curr.id === id ? { ...curr, ...mergedFields } : curr));
     };
 
-    applyUpdatedUser();
-
     try {
-      const token = await ensureValidToken();
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'x-admin-role': 'super_admin'
-      };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
       const res = await fetch(`/api/admin/users/${encodeURIComponent(id)}/status`, {
         method: 'PUT',
-        headers,
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ status: 'Active', durationDays })
       });
       const data = await safeParseResponse(res);
       if (res.ok && data?.success && data?.user) {
         applyUpdatedUser(data.user);
+        await fetchUsers();
+        showToast(`Plan activated & renewed successfully (+${durationDays} days)!`, 'success');
+        logActivity(`Renewed user ${id} plan (+${durationDays}d) - Status: Plan Active`, 'admin');
+        return;
       }
-      await fetchUsers();
-    } catch {}
-
-    showToast(`Plan activated & renewed successfully (+${durationDays} days)!`, 'success');
-    logActivity(`Renewed user ${id} plan (+${durationDays}d) - Status: Plan Active`, 'admin');
+      showToast(data?.message || 'Failed to renew plan.', 'error');
+    } catch (err: any) {
+      showToast(`Failed to renew plan: ${err?.message || 'Network error'}`, 'error');
+    }
   };
 
   const expireUserPlan = async (id: string) => {
@@ -1334,50 +979,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         expiresAt: serverUser?.expiresAt || expiredIso
       };
 
-      setUsers(prev => {
-        const updated = prev.map(u => (u.id === id ? { ...u, ...mergedFields } : u));
-        try {
-          localStorage.setItem('streamjoin_users_data', JSON.stringify(updated));
-        } catch {}
-        return updated;
-      });
-
-      setCurrentUser(curr => {
-        if (curr && curr.id === id) {
-          const updated = { ...curr, ...mergedFields };
-          try {
-            localStorage.setItem('streamjoin_current_user', JSON.stringify(updated));
-          } catch {}
-          return updated;
-        }
-        return curr;
-      });
+      setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...mergedFields } : u)));
+      setCurrentUser(curr => (curr && curr.id === id ? { ...curr, ...mergedFields } : curr));
     };
 
-    applyExpiredUser();
-
     try {
-      const token = await ensureValidToken();
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'x-admin-role': 'super_admin'
-      };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
       const res = await fetch(`/api/admin/users/${encodeURIComponent(id)}/status`, {
         method: 'PUT',
-        headers,
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ status: 'Inactive' })
       });
       const data = await safeParseResponse(res);
       if (res.ok && data?.success && data?.user) {
         applyExpiredUser(data.user);
+        await fetchUsers();
+        showToast('Plan marked as Plan Expire!', 'error');
+        logActivity(`Expired user ${id} plan - Status: Plan Expire`, 'admin');
+        return;
       }
-      await fetchUsers();
-    } catch {}
-
-    showToast(`Plan marked as Plan Expire!`, 'error');
-    logActivity(`Expired user ${id} plan - Status: Plan Expire`, 'admin');
+      showToast(data?.message || 'Failed to update plan status.', 'error');
+    } catch (err: any) {
+      showToast(`Failed to expire plan: ${err?.message || 'Network error'}`, 'error');
+    }
   };
 
   const updateUserStatus = (id: string, status: 'Active' | 'Suspended') => {
@@ -1395,28 +1018,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     videoDuration?: string;
     durationSeconds?: number;
   }): Promise<boolean> => {
-    let token = localStorage.getItem('streamjoin_token');
+    const token = authTokenRef.current;
     if (!token) {
-      token = (await ensureValidToken()) || '';
-    }
-
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    } else if (currentUser) {
-      headers['x-user-id'] = currentUser.id;
-      if (currentUser.role === 'super_admin') headers['x-admin-role'] = 'super_admin';
+      showToast('Authentication required. Please login.', 'error');
+      return false;
     }
 
     try {
       const res = await fetch('/api/streams', {
         method: 'POST',
-        headers,
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           title: streamData.title,
           playlistId: streamData.playlistId,
           streamUrl: streamData.rtmpUrl,
           streamKey: streamData.streamKey,
+          isDualStream: Boolean(streamData.isDualStream),
+          backupRtmpUrl: streamData.backupRtmpUrl || '',
           thumbnail: streamData.thumbnail,
           resolution: streamData.resolution,
           bitrate: streamData.bitrate,
@@ -1442,14 +1060,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           time: s.time || 'Just now',
           status: s.status || streamData.status || 'scheduled'
         };
-        setStreams(prev => {
-          const updated = [newStream, ...prev.filter(x => x.id !== s.id)];
-          try {
-            localStorage.setItem('streamjoin_streams_cache', JSON.stringify(updated));
-          } catch {}
-          return updated;
-        });
-        fetchStreams(token || undefined).catch(() => {});
+        setStreams(prev => [newStream, ...prev.filter(x => x.id !== s.id)]);
+        fetchStreams(token).catch(() => {});
         showToast(`Stream "${newStream.title}" created & permanently saved in database!`, 'success');
         logActivity(`Created stream: ${newStream.title}`, 'user');
 
@@ -1478,18 +1090,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const stopPromise = (async (): Promise<boolean> => {
         setStoppingStreamIds(prev => (prev.includes(id) ? prev : [...prev, id]));
         try {
-          let token = localStorage.getItem('streamjoin_token');
+          const token = authTokenRef.current;
           if (!token) {
-            token = (await ensureValidToken()) || '';
+            showToast('Authentication required. Please login.', 'error');
+            return false;
           }
-
-          const buildHeaders = (tok: string | null): Record<string, string> => {
-            const h: Record<string, string> = {};
-            if (tok) {
-              h['Authorization'] = `Bearer ${tok}`;
-            }
-            return h;
-          };
 
           const retryDelays = [1200, 2400];
           let lastErrorMsg = 'Failed to confirm stream stop from server.';
@@ -1500,26 +1105,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             try {
               const res = await fetch(`/api/streams/${encodeURIComponent(id)}/stop`, {
                 method: 'POST',
-                headers: buildHeaders(token),
+                headers: getAuthHeaders(undefined, token),
                 signal: controller.signal
               });
               clearTimeout(timeoutId);
 
-              if (res.status === 401 && attempt < retryDelays.length) {
-                const refreshed = await ensureValidToken();
-                if (refreshed) token = refreshed;
-              }
-
               const data = await safeParseResponse(res);
 
               if (res.ok && data?.success) {
-                setStreams(prev => {
-                  const updated = prev.map(s => (s.id === id ? { ...s, status: 'ended' as const, viewers: 0 } : s));
-                  try {
-                    localStorage.setItem('streamjoin_streams_cache', JSON.stringify(updated));
-                  } catch {}
-                  return updated;
-                });
+                setStreams(prev => prev.map(s => (s.id === id ? { ...s, status: 'ended' as const, viewers: 0 } : s)));
                 setActiveViewingStream(curr => (curr && curr.id === id ? { ...curr, status: 'ended', viewers: 0 } : curr));
                 setPlaylists(prev =>
                   prev.map(p => {
@@ -1576,34 +1170,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return stopPromise;
     }
 
-    let token = localStorage.getItem('streamjoin_token');
-    if (!token && currentUser?.email) {
-      try {
-        const loginRes = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: currentUser.email,
-            password: currentUser.role === 'super_admin' ? 'admin1234' : 'user1234'
-          })
-        });
-        const loginData = await loginRes.json();
-        if (loginData.token && typeof loginData.token === 'string') {
-          const validToken: string = loginData.token;
-          token = validToken;
-          localStorage.setItem('streamjoin_token', validToken);
-        }
-      } catch {}
-    }
-
-    const authHeaders: Record<string, string> = {};
-    if (token) {
-      authHeaders['Authorization'] = `Bearer ${token}`;
+    const token = authTokenRef.current;
+    if (!token) {
+      showToast('Authentication required. Please login.', 'error');
+      return false;
     }
 
     try {
       if (status === 'live') {
-        const res = await fetch(`/api/streams/${id}/start`, { method: 'POST', headers: authHeaders });
+        const res = await fetch(`/api/streams/${id}/start`, {
+          method: 'POST',
+          headers: getAuthHeaders(undefined, token)
+        });
         const data = await safeParseResponse(res);
         if (res.ok && data.success) {
           setStreams(prev => prev.map(s => {
@@ -1647,31 +1225,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteStream = async (id: string) => {
-    let token = localStorage.getItem('streamjoin_token');
-    if (!token) {
-      token = (await ensureValidToken()) || '';
+    if (!authTokenRef.current) {
+      showToast('Authentication required. Please login.', 'error');
+      return;
     }
     try {
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      else if (currentUser) {
-        headers['x-user-id'] = currentUser.id;
-        if (currentUser.role === 'super_admin') headers['x-admin-role'] = 'super_admin';
-      }
-
       const res = await fetch(`/api/streams/${id}`, {
         method: 'DELETE',
-        headers
+        headers: getAuthHeaders()
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setStreams(prev => {
-          const updated = prev.filter(s => s.id !== id);
-          try {
-            localStorage.setItem('streamjoin_streams_cache', JSON.stringify(updated));
-          } catch {}
-          return updated;
-        });
+        setStreams(prev => prev.filter(s => s.id !== id));
         showToast('Stream removed permanently from database.', 'info');
         logActivity(`Deleted stream ${id}`, 'user');
         return;
@@ -1683,14 +1248,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addPlaylist = async (playlistData: Omit<PlaylistItem, 'id' | 'createdAt'>): Promise<PlaylistItem | null> => {
-    const token = localStorage.getItem('streamjoin_token');
+    if (!authTokenRef.current) {
+      showToast('Authentication required. Please login.', 'error');
+      return null;
+    }
     try {
       const res = await fetch('/api/playlists', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           name: playlistData.name,
           description: playlistData.description || '',
@@ -1716,31 +1281,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return newPl;
       }
 
-      // Safe local fallback
-      const localId = `pl-${Date.now()}`;
-      const fallbackPl: PlaylistItem = {
-        ...playlistData,
-        id: localId,
-        userId: currentUser?.id || 'u-user-1',
-        createdAt: 'Today',
-        videos: []
-      };
-      setPlaylists(prev => [fallbackPl, ...prev]);
-      setSelectedPlaylistId(localId);
-      return fallbackPl;
+      showToast(data?.message || 'Failed to create playlist.', 'error');
+      return null;
     } catch (err: any) {
-      console.warn('Error creating playlist on server:', err.message);
-      const localId = `pl-${Date.now()}`;
-      const fallbackPl: PlaylistItem = {
-        ...playlistData,
-        id: localId,
-        userId: currentUser?.id || 'u-user-1',
-        createdAt: 'Today',
-        videos: []
-      };
-      setPlaylists(prev => [fallbackPl, ...prev]);
-      setSelectedPlaylistId(localId);
-      return fallbackPl;
+      showToast(`Error creating playlist: ${err?.message || 'Network error'}`, 'error');
+      return null;
     }
   };
 
@@ -1821,14 +1366,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return [...prev, newPlaylist];
     });
 
-    const token = localStorage.getItem('streamjoin_token');
+    const token = authTokenRef.current;
     try {
       const res = await fetch(`/api/playlists/${playlistId}/videos`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }, token || undefined),
         body: JSON.stringify(newVideo)
       });
 
@@ -1893,14 +1435,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
 
     // Persist to backend server API
-    const token = localStorage.getItem('streamjoin_token');
+    const token = authTokenRef.current;
     if (token) {
       fetch(`/api/playlists/${playlistId}/videos`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }, token),
         body: JSON.stringify(videoItem)
       }).catch(err => console.warn('Failed to sync video to backend playlist:', err));
     }
@@ -2000,16 +1539,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Notify backend Express / FFmpeg engine if targetStream exists
     if (targetStream) {
-      const token = localStorage.getItem('streamjoin_token');
-      const authHeaders: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      if (token) {
-        authHeaders['Authorization'] = `Bearer ${token}`;
-      }
       fetch(`/api/streams/${targetStream.id}/restart`, {
         method: 'POST',
-        headers: authHeaders,
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ playlistId, trackIndex })
       })
         .then(res => safeParseResponse(res).catch(() => null))
@@ -2027,12 +1559,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const removeVideoFromPlaylist = async (playlistId: string, videoId: string) => {
     try {
-      const token = localStorage.getItem('streamjoin_token');
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
       await fetch(`/api/playlists/${playlistId}/videos/${videoId}`, {
         method: 'DELETE',
-        headers
+        headers: getAuthHeaders()
       });
     } catch (e) {
       console.warn('Failed to delete video from playlist on server:', e);
@@ -2053,12 +1582,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deletePlaylist = async (id: string) => {
     try {
-      const token = localStorage.getItem('streamjoin_token');
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
       await fetch(`/api/playlists/${id}`, {
         method: 'DELETE',
-        headers
+        headers: getAuthHeaders()
       });
     } catch (e) {
       console.warn('Failed to delete playlist on server:', e);
@@ -2192,13 +1718,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Send to backend
     try {
-      const token = localStorage.getItem('streamjoin_token');
       await fetch('/api/billing/submit-payment', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           planId: data.planId,
           gateway: data.gateway,
@@ -2251,29 +1773,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return updated;
     });
 
-    // 2. Activate user account in users state & localStorage immediately
-    setUsers(prev => {
-      const updated = prev.map(u => {
-        const matches = (tx.userId && u.id === tx.userId) ||
-                        (tx.userEmail && u.email && u.email.toLowerCase() === tx.userEmail.toLowerCase()) ||
-                        (tx.userName && u.name && u.name.toLowerCase() === tx.userName.toLowerCase());
-        if (matches) {
-          return {
-            ...u,
-            status: 'Active' as const,
-            plan: planTier,
-            renewalDaysLeft: 30,
-            renewalDate: newRenewalDate,
-            expiresAt: expiresAtIso
-          };
-        }
-        return u;
-      });
-      try {
-        localStorage.setItem('streamjoin_users_data', JSON.stringify(updated));
-      } catch {}
-      return updated;
-    });
+    // 2. Activate user account in users state
+    setUsers(prev => prev.map(u => {
+      const matches = (tx.userId && u.id === tx.userId) ||
+                      (tx.userEmail && u.email && u.email.toLowerCase() === tx.userEmail.toLowerCase()) ||
+                      (tx.userName && u.name && u.name.toLowerCase() === tx.userName.toLowerCase());
+      if (matches) {
+        return {
+          ...u,
+          status: 'Active' as const,
+          plan: planTier,
+          renewalDaysLeft: 30,
+          renewalDate: newRenewalDate,
+          expiresAt: expiresAtIso
+        };
+      }
+      return u;
+    }));
 
     // 3. Update current user if matching
     if (currentUser && (
@@ -2290,19 +1806,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         expiresAt: expiresAtIso
       };
       setCurrentUser(updatedUser);
-      try {
-        localStorage.setItem('streamjoin_current_user', JSON.stringify(updatedUser));
-      } catch {}
     }
 
     // 4. Send full backend sync payload to guarantee PostgreSQL activates the user account
     try {
       await fetch(`/api/admin/transactions/${encodeURIComponent(tx.id)}/approve`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'x-admin-role': 'super_admin'
-        },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           transactionId: tx.id,
           transactionRef: tx.transactionId,
@@ -2335,7 +1845,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fetch(`/api/admin/transactions/${transactionId}/reject`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' })
       });
     } catch (e) {}
 
@@ -2463,15 +1973,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateHomepageDemoConfig = async (newConfig: Partial<HomepageDemoConfig>): Promise<boolean> => {
-    const token = localStorage.getItem('streamjoin_token');
     const merged = { ...homepageDemoConfig, ...newConfig };
     try {
       const res = await fetch('/api/admin/homepage-demo', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(merged)
       });
       const data = await safeParseResponse(res);
@@ -2493,14 +1999,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const resetHomepageDemoConfig = async (): Promise<boolean> => {
-    const token = localStorage.getItem('streamjoin_token');
     try {
       const res = await fetch('/api/admin/homepage-demo/reset', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        }
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' })
       });
       const data = await safeParseResponse(res);
       if (res.ok && data?.success && data?.config) {
@@ -2577,6 +2079,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         currency,
         setCurrency,
         formatPrice,
+        authToken,
         currentUser,
         setCurrentUser,
         adminImpersonatorUser,
@@ -2585,6 +2088,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         switchRole,
         login,
         register,
+        changePassword,
         logout,
         users,
         fetchUsers,

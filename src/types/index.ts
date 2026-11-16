@@ -50,6 +50,8 @@ export interface StreamItem {
   playlistId?: string;
   streamKey?: string;
   rtmpUrl?: string;
+  isDualStream?: boolean;
+  backupRtmpUrl?: string;
   resolution?: string;
   bitrate?: string;
   loop?: boolean;

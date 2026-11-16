@@ -9,12 +9,19 @@ import {
   Database,
   ShieldAlert,
   Save,
-  CheckCircle2
+  CheckCircle2,
+  Lock
 } from 'lucide-react';
 
 export const SystemSettingsPage: React.FC = () => {
-  const { systemSettings, updateSystemSettings, showToast } = useApp();
-  const [subTab, setSubTab] = useState<'general' | 'payments' | 'youtube' | 'smtp' | 'storage' | 'backup' | 'maintenance'>('general');
+  const { systemSettings, updateSystemSettings, changePassword, currentUser, showToast } = useApp();
+  const [subTab, setSubTab] = useState<'general' | 'password' | 'payments' | 'youtube' | 'smtp' | 'storage' | 'backup' | 'maintenance'>('general');
+
+  // Admin password change states
+  const [currentAdminPass, setCurrentAdminPass] = useState('');
+  const [newAdminPass, setNewAdminPass] = useState('');
+  const [confirmAdminPass, setConfirmAdminPass] = useState('');
+  const [updatingAdminPass, setUpdatingAdminPass] = useState(false);
 
   // Form states
   const [websiteName, setWebsiteName] = useState(systemSettings.websiteName);
@@ -52,8 +59,36 @@ export const SystemSettingsPage: React.FC = () => {
     });
   };
 
+  const handleAdminPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentAdminPass) {
+      showToast('Please enter your current password.', 'error');
+      return;
+    }
+    if (newAdminPass.trim().length < 6) {
+      showToast('New password must be at least 6 characters long.', 'error');
+      return;
+    }
+    if (newAdminPass !== confirmAdminPass) {
+      showToast('New passwords do not match.', 'error');
+      return;
+    }
+    setUpdatingAdminPass(true);
+    try {
+      const ok = await changePassword(currentAdminPass, newAdminPass);
+      if (ok) {
+        setCurrentAdminPass('');
+        setNewAdminPass('');
+        setConfirmAdminPass('');
+      }
+    } finally {
+      setUpdatingAdminPass(false);
+    }
+  };
+
   const navItems = [
     { id: 'general', label: 'General Settings', icon: Settings },
+    { id: 'password', label: 'Admin Password', icon: Lock },
     { id: 'payments', label: 'Payment Gateways', icon: CreditCard },
     { id: 'youtube', label: 'YouTube API', icon: Youtube },
     { id: 'smtp', label: 'SMTP Settings', icon: Mail },
@@ -94,6 +129,65 @@ export const SystemSettingsPage: React.FC = () => {
 
         {/* Right Settings Form matching reference 16 */}
         <div className="md:col-span-8 p-6 sm:p-8 rounded-2xl bg-[#0F1626] border border-slate-800">
+          {subTab === 'password' ? (
+            <form onSubmit={handleAdminPasswordSubmit} className="space-y-4">
+              <div className="border-b border-slate-800 pb-2">
+                <h3 className="text-sm font-bold text-white">Change Admin Password</h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Account: <span className="text-slate-200 font-semibold">{currentUser?.email || 'admin@streamallow.com'}</span> (stored securely with bcrypt hash)
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Current Password</label>
+                <input
+                  type="password"
+                  required
+                  value={currentAdminPass}
+                  onChange={e => setCurrentAdminPass(e.target.value)}
+                  placeholder="Enter current password"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">New Password (minimum 6 characters)</label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={newAdminPass}
+                  onChange={e => setNewAdminPass(e.target.value)}
+                  placeholder="Enter new strong password"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Confirm New Password</label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={confirmAdminPass}
+                  onChange={e => setConfirmAdminPass(e.target.value)}
+                  placeholder="Confirm new password"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#FF1B6B]"
+                />
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={updatingAdminPass}
+                  className="px-6 py-2.5 rounded-xl font-bold text-xs text-white gradient-brand hover:opacity-95 shadow-md shadow-rose-600/30 flex items-center gap-2 disabled:opacity-50"
+                >
+                  <Lock className="w-4 h-4" />
+                  <span>{updatingAdminPass ? 'Updating Password...' : 'Update Admin Password'}</span>
+                </button>
+              </div>
+            </form>
+          ) : (
           <form onSubmit={handleSave} className="space-y-5">
             {subTab === 'general' && (
               <>
@@ -283,6 +377,7 @@ export const SystemSettingsPage: React.FC = () => {
               </button>
             </div>
           </form>
+          )}
         </div>
       </div>
     </div>

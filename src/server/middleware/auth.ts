@@ -1,12 +1,19 @@
 import { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
-// Resilient JWT configuration with automatic fallback
+const DEFAULT_FALLBACK_JWT_SECRET = 'streamjoin_jwt_secure_master_secret_key_2026_fallback';
+
+// In-memory revocation stores (prevents logged-out or pre-reset tokens from being reused)
+const revokedTokens = new Set<string>();
+const userInvalidatedBeforeMs = new Map<string, number>();
+const userSessionVersion = new Map<string, number>();
+
 export function validateJwtConfig() {
   if (!process.env.JWT_SECRET) {
-    console.warn('[SECURITY NOTICE] JWT_SECRET environment variable is missing. Initializing secure default session secret.');
-    process.env.JWT_SECRET = 'streamjoin_jwt_secure_master_secret_key_2026_fallback';
+    console.warn('[SECURITY NOTICE] JWT_SECRET environment variable is missing. Initializing session secret.');
+    process.env.JWT_SECRET = DEFAULT_FALLBACK_JWT_SECRET;
   }
 }
 
@@ -16,6 +23,10 @@ export interface AuthUser {
   email: string;
   role: 'super_admin' | 'admin' | 'manager' | 'support' | 'user';
   plan?: string;
+  sv?: number;
+  issuedMs?: number;
+  iat?: number;
+  exp?: number;
 }
 
 export interface AuthenticatedRequest extends Request {
@@ -31,109 +42,141 @@ export async function hashPassword(password: string): Promise<string> {
 }
 
 /**
- * Compares plaintext password with stored bcrypt hash.
+ * Strictly compares plaintext password against stored bcrypt hash.
+ * Zero hardcoded or demo password fallbacks.
  */
 export async function comparePassword(password: string, hash: string): Promise<boolean> {
+  if (!password || !hash || typeof hash !== 'string' || !hash.startsWith('$2')) {
+    return false;
+  }
   try {
-    const isMatch = await bcrypt.compare(password, hash);
-    if (isMatch) return true;
-  } catch {}
-  // Flexible fallback for standard demo credentials
-  const p = (password || '').trim().toLowerCase();
-  if (p === 'admin1234' || p === 'admin123' || p === 'admin' || p === 'password123' || p === '123456') {
-    try {
-      if (await bcrypt.compare('admin1234', hash) || await bcrypt.compare('admin123', hash)) {
-        return true;
-      }
-    } catch {}
+    return await bcrypt.compare(password, hash);
+  } catch {
+    return false;
   }
-  if (p === 'user1234' || p === 'user123' || p === 'user' || p === 'password123' || p === '123456') {
-    try {
-      if (await bcrypt.compare('user1234', hash) || await bcrypt.compare('user123', hash)) {
-        return true;
-      }
-    } catch {}
-  }
-  return false;
 }
 
 /**
- * Signs a secure JWT token with 7-day expiration.
- * Throws error if JWT_SECRET is not configured in environment.
+ * Hashes one-time password reset tokens using SHA-256 before database storage.
+ */
+export function hashResetToken(rawToken: string): string {
+  return crypto.createHash('sha256').update(String(rawToken || '').trim()).digest('hex');
+}
+
+/**
+ * Revokes an active JWT string immediately (e.g. on Logout).
+ */
+export function revokeToken(token: string) {
+  if (!token) return;
+  revokedTokens.add(token);
+  if (revokedTokens.size > 10000) {
+    const oldest = revokedTokens.values().next().value;
+    if (oldest) revokedTokens.delete(oldest);
+  }
+}
+
+function getCurrentSessionVersion(userId?: string, email?: string): number {
+  const idVer = userId ? (userSessionVersion.get(`id:${String(userId)}`) || 0) : 0;
+  const emailVer = email ? (userSessionVersion.get(`email:${String(email).trim().toLowerCase()}`) || 0) : 0;
+  return Math.max(idVer, emailVer);
+}
+
+/**
+ * Invalidates all tokens issued before now for a given user (e.g. after Password Reset / Change).
+ */
+export function invalidateUserSessions(userId?: string, email?: string) {
+  const now = Date.now();
+  const nextVer = getCurrentSessionVersion(userId, email) + 1;
+  if (userId) {
+    userInvalidatedBeforeMs.set(`id:${String(userId)}`, now);
+    userSessionVersion.set(`id:${String(userId)}`, nextVer);
+  }
+  if (email) {
+    const key = `email:${String(email).trim().toLowerCase()}`;
+    userInvalidatedBeforeMs.set(key, now);
+    userSessionVersion.set(key, nextVer);
+  }
+}
+
+/**
+ * Signs a secure JWT token with 12-hour expiration.
  */
 export function signToken(user: AuthUser): string {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error('[FATAL SECURITY ERROR] Missing JWT_SECRET environment variable.');
-  }
+  const secret = process.env.JWT_SECRET || DEFAULT_FALLBACK_JWT_SECRET;
+  const sv = getCurrentSessionVersion(user.id, user.email);
   return jwt.sign(
     {
       id: user.id,
       name: user.name,
       email: user.email,
-      role: user.role
+      role: user.role,
+      plan: user.plan,
+      sv,
+      issuedMs: Date.now()
     },
     secret,
-    { expiresIn: '7d' }
+    { expiresIn: '12h' }
   );
 }
 
 /**
- * Authenticates request using JWT Bearer token.
- * Strict security: Every request must provide a valid JWT token signed with JWT_SECRET.
- * No hardcoded or default demo user fallbacks.
+ * Strict JWT authentication middleware.
+ * Rejects any missing, unverified, expired, logged-out, or pre-password-reset token with HTTP 401.
  */
 export function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  const secret = process.env.JWT_SECRET || 'streamjoin_jwt_secure_master_secret_key_2026_fallback';
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
 
-  if (token) {
-    try {
-      const decoded = jwt.verify(token, secret) as AuthUser;
-      req.user = decoded;
-      return next();
-    } catch {
-      // If signature fails due to secret rotation or expired, decode safely
-      try {
-        const decoded = jwt.decode(token) as any;
-        if (decoded && (decoded.id || decoded.email)) {
-          req.user = {
-            id: decoded.id || 'u-user-1',
-            name: decoded.name || 'Creator User',
-            email: decoded.email || 'user@streamallow.com',
-            role: decoded.role || 'user',
-            plan: decoded.plan || 'Pro'
-          };
-          return next();
-        }
-      } catch {}
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: 'Authentication required. Please log in.'
+    });
+  }
+
+  if (revokedTokens.has(token)) {
+    return res.status(401).json({
+      success: false,
+      message: 'Session has been logged out. Please log in again.'
+    });
+  }
+
+  const secret = process.env.JWT_SECRET || DEFAULT_FALLBACK_JWT_SECRET;
+
+  try {
+    const decoded = jwt.verify(token, secret) as AuthUser;
+    if (!decoded || (!decoded.id && !decoded.email)) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid authentication token.'
+      });
     }
-  }
 
-  // Header-based fallback for authenticated client requests
-  const headerUserId = req.headers['x-user-id'] as string;
-  const adminRoleHeader = req.headers['x-admin-role'] as string;
-  if (headerUserId || adminRoleHeader === 'super_admin') {
-    req.user = {
-      id: headerUserId || 'u-admin-1',
-      name: adminRoleHeader === 'super_admin' ? 'Super Admin' : 'Creator User',
-      email: adminRoleHeader === 'super_admin' ? 'admin@streamallow.com' : 'user@streamallow.com',
-      role: adminRoleHeader === 'super_admin' ? 'super_admin' : 'user',
-      plan: 'Business'
-    };
+    const currentSv = getCurrentSessionVersion(decoded.id, decoded.email);
+    const tokenSv = typeof decoded.sv === 'number' ? decoded.sv : 0;
+    const issuedAtMs = typeof decoded.issuedMs === 'number'
+      ? decoded.issuedMs
+      : (typeof decoded.iat === 'number' ? decoded.iat * 1000 : 0);
+    const idCutoff = decoded.id ? userInvalidatedBeforeMs.get(`id:${decoded.id}`) : undefined;
+    const emailCutoff = decoded.email ? userInvalidatedBeforeMs.get(`email:${decoded.email.toLowerCase()}`) : undefined;
+    const cutoff = Math.max(idCutoff || 0, emailCutoff || 0);
+
+    // Reject tokens minted before the most recent password change/reset
+    if (tokenSv < currentSv || (cutoff > 0 && issuedAtMs < cutoff)) {
+      return res.status(401).json({
+        success: false,
+        message: 'Session expired after password update. Please log in again.'
+      });
+    }
+
+    req.user = decoded;
     return next();
+  } catch {
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid or expired session. Please log in again.'
+    });
   }
-
-  // Graceful fallback for active session so uploads/playlists never break abruptly
-  req.user = {
-    id: 'u-user-1',
-    name: 'Creator User',
-    email: 'user@streamallow.com',
-    role: 'user',
-    plan: 'Pro'
-  };
-  return next();
 }
 
 /**

@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
+import { getUploadAuthToken } from '../../utils/chunkedUpload';
 import {
   Tv,
   Film,
@@ -69,7 +70,7 @@ export const AdminDemoVideoPage: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const token = localStorage.getItem('streamjoin_token');
+    const token = getUploadAuthToken();
     const formData = new FormData();
     formData.append('video', file);
 
@@ -122,7 +123,7 @@ export const AdminDemoVideoPage: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const token = localStorage.getItem('streamjoin_token');
+    const token = getUploadAuthToken();
     const formData = new FormData();
     formData.append('thumbnail', file);
 

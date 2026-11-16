@@ -3,7 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { User, Lock, Bell, Link2, Upload, CheckCircle2, ShieldCheck } from 'lucide-react';
 
 export const ProfileSettingsPage: React.FC = () => {
-  const { currentUser, setCurrentUser, showToast, logActivity } = useApp();
+  const { currentUser, setCurrentUser, changePassword, showToast, logActivity } = useApp();
   const [activeTab, setActiveTab] = useState<'info' | 'password' | 'notifications' | 'accounts'>('info');
 
   const [name, setName] = useState(currentUser?.name || 'Fahim Ahmed');
@@ -16,6 +16,7 @@ export const ProfileSettingsPage: React.FC = () => {
   const [currentPass, setCurrentPass] = useState('');
   const [newPass, setNewPass] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
+  const [updatingPass, setUpdatingPass] = useState(false);
 
   const handleSaveInfo = (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,16 +32,32 @@ export const ProfileSettingsPage: React.FC = () => {
     logActivity('Updated user profile settings', 'user');
   };
 
-  const handlePasswordSubmit = (e: React.FormEvent) => {
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!currentPass) {
+      showToast('Please enter your current password.', 'error');
+      return;
+    }
+    if (newPass.trim().length < 6) {
+      showToast('New password must be at least 6 characters long.', 'error');
+      return;
+    }
     if (newPass !== confirmPass) {
       showToast('New passwords do not match.', 'error');
       return;
     }
-    showToast('Account password has been changed securely.', 'success');
-    setCurrentPass('');
-    setNewPass('');
-    setConfirmPass('');
+
+    setUpdatingPass(true);
+    try {
+      const ok = await changePassword(currentPass, newPass);
+      if (ok) {
+        setCurrentPass('');
+        setNewPass('');
+        setConfirmPass('');
+      }
+    } finally {
+      setUpdatingPass(false);
+    }
   };
 
   return (
@@ -211,9 +228,10 @@ export const ProfileSettingsPage: React.FC = () => {
 
               <button
                 type="submit"
-                className="px-6 py-2.5 rounded-xl font-bold text-xs text-white gradient-brand hover:opacity-95 shadow-md shadow-rose-600/30"
+                disabled={updatingPass}
+                className="px-6 py-2.5 rounded-xl font-bold text-xs text-white gradient-brand hover:opacity-95 shadow-md shadow-rose-600/30 disabled:opacity-50"
               >
-                Update Password
+                {updatingPass ? 'Updating...' : 'Update Password'}
               </button>
             </form>
           )}

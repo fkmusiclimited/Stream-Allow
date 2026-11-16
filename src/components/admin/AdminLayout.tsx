@@ -37,7 +37,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     currentUser,
     currency,
     setCurrency,
-    switchRole,
+    logout,
     impersonateUser,
     users,
     notifications,
@@ -208,7 +208,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                   </button>
                   <div className="border-t border-slate-800 pt-1">
                     <button
-                      onClick={() => { switchRole('guest'); setProfileDropdownOpen(false); }}
+                      onClick={() => { setProfileDropdownOpen(false); logout(); }}
                       className="w-full text-left p-2 rounded-lg hover:bg-rose-950/40 text-rose-400"
                     >
                       Logout Admin

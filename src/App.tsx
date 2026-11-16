@@ -89,19 +89,31 @@ const AppContent: React.FC = () => {
 
   const isAdmin = (currentUser && ['super_admin', 'admin', 'manager', 'support_manager', 'finance_manager'].includes(currentUser.role)) || !!adminImpersonatorUser;
 
-  // Prevent regular users or guests from accessing admin routes
+  // Prevent unauthenticated visitors from accessing admin or user routes, and regular users from admin routes
   React.useEffect(() => {
+    if (!currentUser && (currentPath.startsWith('admin/') || currentPath.startsWith('user/'))) {
+      navigate('public/login');
+      return;
+    }
     if (currentPath.startsWith('admin/') && !isAdmin) {
-      if (currentUser) {
-        navigate('user/dashboard');
-      } else {
-        navigate('public/login');
-      }
+      navigate('user/dashboard');
     }
   }, [currentPath, isAdmin, currentUser, navigate]);
 
   // Route routing logic
   const renderView = () => {
+    if (!currentUser && (currentPath.startsWith('user/') || currentPath.startsWith('admin/'))) {
+      return (
+        <div className="min-h-screen flex flex-col bg-[#0B0F17] text-slate-100">
+          <Navbar />
+          <main className="flex-1">
+            <AuthPage initialMode="login" />
+          </main>
+          <Footer />
+        </div>
+      );
+    }
+
     // 1. User Dashboard Routes
     if (currentPath.startsWith('user/')) {
       return (

@@ -64,12 +64,12 @@ export const CreateStreamPage: React.FC = () => {
   const videoFileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Separate RTMP Server URL and YouTube Stream Key states
-  const [rtmpServerUrl, setRtmpServerUrl] = useState('rtmps://a.rtmp.youtube.com/live2');
+  const [rtmpServerUrl, setRtmpServerUrl] = useState('rtmps://a.rtmps.youtube.com/live2');
   const [streamKey, setStreamKey] = useState('');
   const [showStreamKey, setShowStreamKey] = useState(false);
   const [dualStream, setDualStream] = useState(false);
   const [secondaryStreamUrl, setSecondaryStreamUrl] = useState('');
-  const [backupRtmpServer, setBackupRtmpServer] = useState('rtmps://b.rtmp.youtube.com/live2?backup=1');
+  const [backupRtmpServer, setBackupRtmpServer] = useState('rtmps://b.rtmps.youtube.com/live2?backup=1');
 
   const [uploadedVideoData, setUploadedVideoData] = useState<{
     title: string;
@@ -365,7 +365,7 @@ export const CreateStreamPage: React.FC = () => {
       return;
     }
 
-    const cleanServerUrl = rtmpServerUrl.trim() || 'rtmps://a.rtmp.youtube.com/live2';
+    const cleanServerUrl = rtmpServerUrl.trim() || 'rtmps://a.rtmps.youtube.com/live2';
     const cleanKey = streamKey.trim();
 
     if (!cleanKey || cleanKey.includes('auto_streamjoin_key')) {
@@ -449,8 +449,10 @@ export const CreateStreamPage: React.FC = () => {
         durationSeconds: uploadedVideoData?.durationSeconds,
         streamKey: cleanKey,
         rtmpUrl: cleanServerUrl,
+        isDualStream: dualStream,
+        backupRtmpUrl: dualStream ? (secondaryStreamUrl.trim() || backupRtmpServer.trim()) : '',
         resolution,
-        bitrate: resolution === '1080p60' ? '6000 kbps' : '4500 kbps',
+        bitrate: resolution === '1080p60' ? '6000 kbps' : resolution === '720p60' ? '4000 kbps' : resolution === '720p' ? '3000 kbps' : '4500 kbps',
         loop: loop247
       };
 
@@ -856,7 +858,7 @@ export const CreateStreamPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      setRtmpServerUrl('rtmps://a.rtmp.youtube.com/live2');
+                      setRtmpServerUrl('rtmps://a.rtmps.youtube.com/live2');
                       showToast('Reset to secure YouTube RTMPS endpoint', 'info');
                     }}
                     className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
@@ -869,7 +871,7 @@ export const CreateStreamPage: React.FC = () => {
                 type="text"
                 value={rtmpServerUrl}
                 onChange={e => setRtmpServerUrl(e.target.value)}
-                placeholder="rtmps://a.rtmp.youtube.com/live2"
+                placeholder="rtmps://a.rtmps.youtube.com/live2"
                 className="w-full bg-[#0D121F] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[#FF1B6B]"
               />
             </div>
@@ -956,7 +958,7 @@ export const CreateStreamPage: React.FC = () => {
                 type="text"
                 value={backupRtmpServer}
                 onChange={e => setBackupRtmpServer(e.target.value)}
-                placeholder="rtmp://b.rtmp.youtube.com/live2?backup=1"
+                placeholder="rtmps://b.rtmps.youtube.com/live2?backup=1"
                 className="w-full bg-[#0D121F] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[#FF1B6B]"
               />
             </div>
