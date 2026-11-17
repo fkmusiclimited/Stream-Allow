@@ -1047,8 +1047,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         })
       });
 
-      const data = await res.json();
-      if (res.ok && data.success && data.stream) {
+      const data = await safeParseResponse(res);
+      if (res.ok && data?.success && data?.stream) {
         const s = data.stream;
         const newStream: StreamItem = {
           ...streamData,
@@ -1070,10 +1070,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         return true;
       }
-      showToast(data.message || data.error || 'Failed to create stream.', 'error');
+      showToast(data?.message || data?.error || 'Failed to create stream.', 'error');
       return false;
     } catch (err: any) {
-      showToast(`Error creating stream: ${err.message}`, 'error');
+      showToast(`Error creating stream: ${err?.message || 'Unexpected error'}`, 'error');
       return false;
     }
   };

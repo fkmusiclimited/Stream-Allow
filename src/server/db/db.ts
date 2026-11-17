@@ -4,7 +4,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { PGlite } from '@electric-sql/pglite';
-import { encryptStreamKey } from '../utils/crypto';
+import { encryptStreamKey, packEncryptedStreamKey } from '../utils/crypto';
 import bcrypt from 'bcryptjs';
 import {
   introspectDatabaseSchema,
@@ -13,7 +13,8 @@ import {
   isUuidColumn,
   resolveStreamStatusForDb,
   resolvePlaylistStatusForDb,
-  buildCompatibleInsert
+  buildCompatibleInsert,
+  buildEncryptedStreamKeyColumns
 } from './schemaCompat';
 
 const { Pool } = pg;
@@ -765,21 +766,22 @@ async function seedInitialDataIfEmpty(pgClient: pg.PoolClient | null, externalPg
               ['id', defaultStreamId],
               ['user_id', resolvedAdminId],
               ['title', '24/7 Lo-Fi Chill Radio · Beats to Relax / Study to'],
+              ['name', '24/7 Lo-Fi Chill Radio · Beats to Relax / Study to'],
               ['playlist_id', defaultPlId],
               ['thumbnail', thumbUrl],
               ['thumbnail_url', thumbUrl],
               ['status', resolveStreamStatusForDb('scheduled', streamTable)],
               ['viewers', 0],
+              ['viewer_count', 0],
               ['resolution', '1080p60'],
               ['bitrate', '4500 kbps'],
               ['stream_url', 'rtmp://a.rtmp.youtube.com/live2'],
+              ['rtmp_url', 'rtmp://a.rtmp.youtube.com/live2'],
               ['is_dual_stream', false],
               ['backup_rtmp_url', ''],
               ['category', 'Music'],
               ['privacy', 'Public'],
-              ['encrypted_key_cipher', encKey.cipherText],
-              ['encrypted_key_iv', encKey.iv],
-              ['encrypted_key_tag', encKey.authTag]
+              ...buildEncryptedStreamKeyColumns(streamTable, encKey, packEncryptedStreamKey(encKey))
             ],
             { rawTimestampColumns: ['created_at', 'updated_at'], onConflict: 'ON CONFLICT (id) DO NOTHING' }
           )

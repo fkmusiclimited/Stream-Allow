@@ -339,3 +339,55 @@ export function formatDurationFromSeconds(totalSeconds: number): string {
     ? `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
     : `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
+
+export function buildEncryptedStreamKeyColumns(
+  tableName: string,
+  encrypted: { cipherText: string; iv: string; authTag: string },
+  packedCipher: string
+): Array<[string, string]> {
+  const cols = schemaMeta.columnsByTable.get(tableName);
+  if (!cols || cols.size === 0) {
+    return [
+      ['encrypted_key_cipher', encrypted.cipherText],
+      ['encrypted_key_iv', encrypted.iv],
+      ['encrypted_key_tag', encrypted.authTag]
+    ];
+  }
+
+  const ivCandidates = ['encrypted_key_iv', 'stream_key_iv', 'encryption_iv', 'key_iv', 'iv'];
+  const tagCandidates = [
+    'encrypted_key_tag',
+    'stream_key_tag',
+    'stream_key_auth_tag',
+    'encrypted_key_auth_tag',
+    'auth_tag',
+    'encryption_tag',
+    'key_tag'
+  ];
+  const cipherCandidates = [
+    'encrypted_key_cipher',
+    'encrypted_stream_key',
+    'stream_key_encrypted',
+    'encrypted_key',
+    'cipher_text'
+  ];
+
+  const ivCols = ivCandidates.filter(c => cols.has(c));
+  const tagCols = tagCandidates.filter(c => cols.has(c));
+  const hasSeparateIvAndTag = ivCols.length > 0 && tagCols.length > 0;
+  const valueForCipherCol = hasSeparateIvAndTag ? encrypted.cipherText : packedCipher;
+
+  const pairs: Array<[string, string]> = [];
+  for (const col of cipherCandidates) {
+    if (cols.has(col)) {
+      pairs.push([col, valueForCipherCol]);
+    }
+  }
+  for (const col of ivCols) {
+    pairs.push([col, encrypted.iv]);
+  }
+  for (const col of tagCols) {
+    pairs.push([col, encrypted.authTag]);
+  }
+  return pairs;
+}

@@ -18,11 +18,19 @@ import {
   resolvePlaylistStatusForDb,
   buildCompatibleInsert,
   buildCompatibleUpdate,
+  buildEncryptedStreamKeyColumns,
   toIntOrDefault,
   parseRuntimeToSeconds,
   formatDurationFromSeconds
 } from './src/server/db/schemaCompat';
-import { encryptStreamKey, validateEncryptionConfig, maskStreamKey } from './src/server/utils/crypto';
+import {
+  encryptStreamKey,
+  packEncryptedStreamKey,
+  extractEncryptedKeyFromRow,
+  validateEncryptionConfig,
+  maskStreamKey,
+  EncryptedData
+} from './src/server/utils/crypto';
 import { StreamManager, StreamConfig } from './src/server/ffmpeg/StreamManager';
 import { getVpsMetrics } from './src/server/monitoring/ResourceMonitor';
 import {
@@ -1853,6 +1861,7 @@ async function startServer() {
         const timeStr = createdDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
         const canonicalStatus = normalizeStreamStatusFromDb(s.status);
         const liveStats = canonicalStatus === 'live' ? streamManager.getStreamStats(s.id) : null;
+        const encRow = extractEncryptedKeyFromRow(s);
 
         return {
           id: s.id,
@@ -1869,11 +1878,8 @@ async function startServer() {
           backupRtmpUrl: s.backup_rtmp_url || '',
           category: s.category || 'Music',
           privacy: s.privacy || 'Public',
-          encryptedKey: {
-            cipherText: s.encrypted_key_cipher,
-            iv: s.encrypted_key_iv,
-            authTag: s.encrypted_key_tag
-          },
+          maskedStreamKey: s.masked_stream_key || '••••••••••••',
+          hasEncryptedKey: Boolean(encRow.cipherText && encRow.iv && encRow.authTag),
           storagePath: s.storage_path ?? s.file_path ?? null,
           videoUrl: s.video_url ?? null,
           mediaId: s.media_id ?? null,
@@ -1940,6 +1946,64 @@ async function startServer() {
       return res.status(400).json({
         success: false,
         message: `Dual RTMP streaming is not available on the ${limits.name} plan. Please upgrade to Pro or Business to broadcast to multiple platforms simultaneously.`
+      });
+    }
+
+    // Validate & encrypt YouTube RTMP Stream Key FIRST before creating playlist/stream DB rows
+    let cleanStreamUrl = (typeof streamUrl === 'string' && streamUrl.trim() ? streamUrl : 'rtmps://a.rtmps.youtube.com/live2').trim();
+    let cleanStreamKey = typeof streamKey === 'string' ? streamKey.trim() : '';
+
+    // Handle legacy or accidental cases where full RTMP URL was passed in streamKey
+    if (cleanStreamKey.startsWith('rtmp://') || cleanStreamKey.startsWith('rtmps://')) {
+      try {
+        const parsedKeyUrl = new URL(cleanStreamKey);
+        const segs = parsedKeyUrl.pathname.split('/').filter(Boolean);
+        if (segs.length >= 2) {
+          cleanStreamKey = segs.pop()!;
+          parsedKeyUrl.pathname = '/' + segs.join('/');
+          if (!streamUrl || streamUrl.includes('a.rtmp.youtube.com') || streamUrl.includes('a.rtmps.youtube.com')) {
+            cleanStreamUrl = parsedKeyUrl.toString().replace(/\/+$/, '');
+          }
+        } else {
+          cleanStreamKey = '';
+        }
+      } catch {
+        const lastSlashIdx = cleanStreamKey.lastIndexOf('/');
+        if (lastSlashIdx !== -1 && lastSlashIdx < cleanStreamKey.length - 1) {
+          if (!streamUrl || streamUrl.trim() === 'rtmp://a.rtmp.youtube.com/live2') {
+            cleanStreamUrl = cleanStreamKey.substring(0, lastSlashIdx);
+          }
+          cleanStreamKey = cleanStreamKey.substring(lastSlashIdx + 1);
+        } else {
+          cleanStreamKey = '';
+        }
+      }
+    }
+
+    cleanStreamUrl = cleanStreamUrl.replace(/\/+$/, '');
+    cleanStreamKey = cleanStreamKey.replace(/^\/+/, '').trim();
+
+    if (!cleanStreamKey || cleanStreamKey.includes('auto_streamjoin_key')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid YouTube RTMP Stream Key is required.'
+      });
+    }
+
+    let encryptedKey: EncryptedData;
+    let packedEncryptedKey = '';
+    try {
+      encryptedKey = encryptStreamKey(cleanStreamKey);
+      if (!encryptedKey?.cipherText || !encryptedKey?.iv || !encryptedKey?.authTag) {
+        throw new Error('AES-256-GCM returned an incomplete encrypted payload.');
+      }
+      packedEncryptedKey = packEncryptedStreamKey(encryptedKey);
+    } catch (cryptErr: any) {
+      console.error('[Stream Key Encryption Error]:', cryptErr?.message || cryptErr);
+      return res.status(500).json({
+        success: false,
+        message: `Stream Key encryption failed: ${cryptErr?.message || 'Unable to encrypt stream key.'}`,
+        error: cryptErr?.message || 'Stream Key encryption failed'
       });
     }
 
@@ -2143,46 +2207,6 @@ async function startServer() {
       }
     }
 
-    let cleanStreamUrl = (streamUrl || 'rtmps://a.rtmps.youtube.com/live2').trim();
-    let cleanStreamKey = (streamKey || '').trim();
-
-    // Handle legacy or accidental cases where full RTMP URL was passed in streamKey
-    if (cleanStreamKey.startsWith('rtmp://') || cleanStreamKey.startsWith('rtmps://')) {
-      try {
-        const parsedKeyUrl = new URL(cleanStreamKey);
-        const segs = parsedKeyUrl.pathname.split('/').filter(Boolean);
-        if (segs.length >= 2) {
-          cleanStreamKey = segs.pop()!;
-          parsedKeyUrl.pathname = '/' + segs.join('/');
-          if (!streamUrl || streamUrl.includes('a.rtmp.youtube.com') || streamUrl.includes('a.rtmps.youtube.com')) {
-            cleanStreamUrl = parsedKeyUrl.toString().replace(/\/+$/, '');
-          }
-        }
-      } catch {
-        const lastSlashIdx = cleanStreamKey.lastIndexOf('/');
-        if (lastSlashIdx !== -1 && lastSlashIdx < cleanStreamKey.length - 1) {
-          if (!streamUrl || streamUrl.trim() === 'rtmp://a.rtmp.youtube.com/live2') {
-            cleanStreamUrl = cleanStreamKey.substring(0, lastSlashIdx);
-          }
-          cleanStreamKey = cleanStreamKey.substring(lastSlashIdx + 1);
-        }
-      }
-    }
-
-    cleanStreamUrl = cleanStreamUrl.replace(/\/+$/, '');
-    cleanStreamKey = cleanStreamKey.replace(/^\/+/, '');
-
-    if (!cleanStreamKey) {
-      return res.status(400).json({ success: false, message: 'Valid YouTube RTMP stream key is required.' });
-    }
-
-    let encryptedKey;
-    try {
-      encryptedKey = encryptStreamKey(cleanStreamKey);
-    } catch (cryptErr: any) {
-      return res.status(400).json({ success: false, message: cryptErr.message });
-    }
-
     const strRes = resolution || '1080p60';
     const strBit = bitrate || '4500 kbps';
     const strUrl = cleanStreamUrl;
@@ -2194,34 +2218,63 @@ async function startServer() {
       ? attachedMediaId
       : null;
 
+    const encryptedKeyPairs = buildEncryptedStreamKeyColumns(streamTable, encryptedKey, packedEncryptedKey);
+    const hasValidEncryptedCol = encryptedKeyPairs.some(([col, val]) =>
+      ['encrypted_key_cipher', 'encrypted_stream_key', 'stream_key_encrypted', 'encrypted_key', 'cipher_text'].includes(col) &&
+      typeof val === 'string' &&
+      val.trim().length > 0
+    );
+
+    if (!hasValidEncryptedCol) {
+      return res.status(500).json({
+        success: false,
+        message: 'Stream Key encryption failed: encrypted database column could not be resolved.'
+      });
+    }
+
     try {
       const insStreamQ = buildCompatibleInsert(
         streamTable,
         [
           ['id', newId],
           ['user_id', userId],
-          [pickColumn(streamTable, ['title', 'name']), strTitle],
+          ['title', strTitle],
+          ['name', strTitle],
+          ['description', req.body.description || ''],
           ['playlist_id', strPlId],
           ['thumbnail', strThumb],
           ['thumbnail_url', strThumb],
           ['status', scheduledDbStatus],
-          [pickColumn(streamTable, ['viewers', 'viewer_count']), 0],
+          ['viewers', 0],
+          ['viewer_count', 0],
           ['resolution', strRes],
           ['bitrate', strBit],
-          [pickColumn(streamTable, ['stream_url', 'rtmp_url']), strUrl],
+          ['stream_url', strUrl],
+          ['rtmp_url', strUrl],
           ['is_dual_stream', strDual],
           ['backup_rtmp_url', strBackup],
           ['category', strCat],
           ['privacy', strPriv],
-          ['encrypted_key_cipher', encryptedKey.cipherText],
-          ['encrypted_key_iv', encryptedKey.iv],
-          ['encrypted_key_tag', encryptedKey.authTag],
+          ['is_loop', isLoop],
+          ['is_live_loop', isLoop],
+          ['loop', isLoop],
+          ['masked_stream_key', maskStreamKey(cleanStreamKey)],
+          ...encryptedKeyPairs,
           ['storage_path', attachedStoragePath],
+          ['file_path', attachedStoragePath],
           ['video_url', attachedVideoUrl],
           ['media_id', safeStreamMediaId]
         ],
         { rawTimestampColumns: ['created_at', 'updated_at'] }
       );
+
+      if (hasColumn(streamTable, 'encrypted_stream_key') && !insStreamQ.sql.includes('"encrypted_stream_key"')) {
+        return res.status(500).json({
+          success: false,
+          message: 'Stream Key encryption failed: encrypted_stream_key value was missing before insert.'
+        });
+      }
+
       await query(insStreamQ.sql, insStreamQ.params);
 
       res.status(201).json({
@@ -2249,7 +2302,11 @@ async function startServer() {
         }
       });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({
+        success: false,
+        message: err.message || 'Failed to save stream.',
+        error: err.message
+      });
     }
   });
 
@@ -2387,14 +2444,22 @@ async function startServer() {
       // Keep playlist in true order; start from specified track index (default 0)
       const startTrackIdx = typeof req.body.trackIndex === 'number' && req.body.trackIndex >= 0 ? req.body.trackIndex : 0;
 
+      const encRowKey = extractEncryptedKeyFromRow(stream);
+      if (!encRowKey.cipherText || !encRowKey.iv || !encRowKey.authTag) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot start stream: Encrypted YouTube Stream Key is missing or incomplete. Please recreate the stream with a valid Stream Key.'
+        });
+      }
+
       const stats = await streamManager.startStream({
         streamId: stream.id,
         userId: stream.user_id,
         title: stream.title ?? stream.name ?? 'Live Stream',
         streamUrl: stream.stream_url ?? stream.rtmp_url ?? 'rtmps://a.rtmps.youtube.com/live2',
-        encryptedStreamKey: stream.encrypted_key_cipher || '',
-        streamKeyIv: stream.encrypted_key_iv || '',
-        streamKeyAuthTag: stream.encrypted_key_tag || '',
+        encryptedStreamKey: encRowKey.cipherText,
+        streamKeyIv: encRowKey.iv,
+        streamKeyAuthTag: encRowKey.authTag,
         isDualStream: Boolean(stream.is_dual_stream),
         backupRtmpUrl: stream.backup_rtmp_url || '',
         resolution: stream.resolution || '1080p60',
@@ -2552,14 +2617,21 @@ async function startServer() {
       if (streamManager.getStreamStats(id)) {
         stats = await streamManager.restartStream(id, newVideoPaths, reqTrackIndex);
       } else {
+        const encRowKey = extractEncryptedKeyFromRow(stream);
+        if (!encRowKey.cipherText || !encRowKey.iv || !encRowKey.authTag) {
+          return res.status(400).json({
+            success: false,
+            message: 'Cannot restart stream: Encrypted YouTube Stream Key is missing or incomplete.'
+          });
+        }
         stats = await streamManager.startStream({
           streamId: stream.id,
           userId: stream.user_id,
           title: stream.title ?? stream.name ?? 'Live Stream',
           streamUrl: stream.stream_url ?? stream.rtmp_url ?? 'rtmps://a.rtmps.youtube.com/live2',
-          encryptedStreamKey: stream.encrypted_key_cipher || '',
-          streamKeyIv: stream.encrypted_key_iv || '',
-          streamKeyAuthTag: stream.encrypted_key_tag || '',
+          encryptedStreamKey: encRowKey.cipherText,
+          streamKeyIv: encRowKey.iv,
+          streamKeyAuthTag: encRowKey.authTag,
           isDualStream: Boolean(stream.is_dual_stream),
           backupRtmpUrl: stream.backup_rtmp_url || '',
           resolution: stream.resolution || '1080p60',
