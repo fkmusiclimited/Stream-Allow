@@ -24,10 +24,10 @@ export const PricingPage: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-16">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-16 space-y-12 sm:space-y-16">
       {/* Header */}
       <div className="text-center space-y-4 max-w-2xl mx-auto">
-        <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight">
+        <h1 className="text-2xl sm:text-5xl font-extrabold text-white tracking-tight">
           Simple & Affordable Pricing
         </h1>
         <p className="text-slate-400 text-sm sm:text-base">
@@ -35,10 +35,10 @@ export const PricingPage: React.FC = () => {
         </p>
 
         {/* Currency Switcher */}
-        <div className="inline-flex items-center gap-2 p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold">
+        <div className="flex flex-col min-[420px]:inline-flex min-[420px]:flex-row items-stretch sm:items-center gap-1.5 sm:gap-2 p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold max-w-full">
           <button
             onClick={() => setCurrency('BDT')}
-            className={`px-4 py-2 rounded-lg transition-all ${
+            className={`px-3 sm:px-4 py-2 rounded-lg transition-all ${
               currency === 'BDT'
                 ? 'bg-gradient-to-r from-[#FF1B6B] to-[#E11D48] text-white shadow-md'
                 : 'text-slate-400 hover:text-white'
@@ -48,7 +48,7 @@ export const PricingPage: React.FC = () => {
           </button>
           <button
             onClick={() => setCurrency('USD')}
-            className={`px-4 py-2 rounded-lg transition-all ${
+            className={`px-3 sm:px-4 py-2 rounded-lg transition-all ${
               currency === 'USD'
                 ? 'bg-gradient-to-r from-[#FF1B6B] to-[#E11D48] text-white shadow-md'
                 : 'text-slate-400 hover:text-white'
@@ -66,7 +66,7 @@ export const PricingPage: React.FC = () => {
           return (
             <div
               key={p.id}
-              className={`relative rounded-3xl p-8 flex flex-col justify-between transition-all ${
+              className={`relative rounded-3xl p-6 sm:p-8 flex flex-col justify-between transition-all ${
                 isPro
                   ? 'bg-gradient-to-b from-[#141C2E] to-[#0D1322] border-2 border-[#FF1B6B] shadow-2xl shadow-rose-950/40 md:-translate-y-2'
                   : 'bg-[#0F1626]/80 border border-slate-800 hover:border-slate-700'
@@ -121,8 +121,8 @@ export const PricingPage: React.FC = () => {
 
       {/* Checkout / Payment Modal */}
       {selectedPlanToBuy && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-          <div className="relative w-full max-w-md bg-[#0F1626] border border-slate-800 rounded-2xl shadow-2xl p-6 space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md">
+          <div className="relative w-full max-w-md bg-[#0F1626] border border-slate-800 rounded-2xl shadow-2xl p-4 sm:p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div>
                 <h3 className="font-bold text-white text-base">Complete Subscription</h3>
@@ -148,7 +148,7 @@ export const PricingPage: React.FC = () => {
                 <label className="block text-xs font-medium text-slate-300 mb-2">
                   Select Payment Gateway
                 </label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {[
                     { id: 'bKash', label: 'bKash', color: 'border-pink-500/40' },
                     { id: 'Nagad', label: 'Nagad', color: 'border-orange-500/40' },

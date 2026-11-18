@@ -5,18 +5,18 @@ export const TermsPrivacyPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'terms' | 'privacy'>('terms');
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-10">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-16 space-y-8 sm:space-y-10">
       <div className="text-center space-y-4">
-        <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+        <h1 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight">
           {activeTab === 'terms' ? 'Terms & Conditions' : 'Privacy Policy'}
         </h1>
         <p className="text-xs text-slate-400">Last updated: October 30, 2026</p>
 
         {/* Tab switch */}
-        <div className="inline-flex p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold">
+        <div className="inline-flex flex-wrap justify-center gap-1 p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold max-w-full">
           <button
             onClick={() => setActiveTab('terms')}
-            className={`px-5 py-2 rounded-lg transition-all ${
+            className={`px-3.5 sm:px-5 py-2 rounded-lg transition-all ${
               activeTab === 'terms'
                 ? 'bg-[#FF1B6B] text-white shadow'
                 : 'text-slate-400 hover:text-white'
@@ -26,7 +26,7 @@ export const TermsPrivacyPage: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('privacy')}
-            className={`px-5 py-2 rounded-lg transition-all ${
+            className={`px-3.5 sm:px-5 py-2 rounded-lg transition-all ${
               activeTab === 'privacy'
                 ? 'bg-[#FF1B6B] text-white shadow'
                 : 'text-slate-400 hover:text-white'
@@ -37,7 +37,7 @@ export const TermsPrivacyPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="p-8 sm:p-10 rounded-2xl bg-[#0F1626]/90 border border-slate-800 space-y-8 text-xs sm:text-sm text-slate-300 leading-relaxed">
+      <div className="p-5 sm:p-10 rounded-2xl bg-[#0F1626]/90 border border-slate-800 space-y-8 text-xs sm:text-sm text-slate-300 leading-relaxed break-words">
         {activeTab === 'terms' ? (
           <>
             <section className="space-y-2">

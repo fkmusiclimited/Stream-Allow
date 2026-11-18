@@ -23,10 +23,10 @@ export const ContactPage: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-16">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-16 space-y-10 sm:space-y-16">
       <div className="text-center space-y-4 max-w-2xl mx-auto">
         <span className="text-xs font-bold uppercase tracking-widest text-[#FF1B6B]">Direct Support</span>
-        <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight">
+        <h1 className="text-2xl sm:text-5xl font-extrabold text-white tracking-tight">
           Get in Touch
         </h1>
         <p className="text-slate-400 text-sm sm:text-base">
@@ -34,38 +34,38 @@ export const ContactPage: React.FC = () => {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 sm:gap-10">
         {/* Left Contact Info Cards matching reference 9 */}
         <div className="lg:col-span-5 space-y-4">
-          <div className="p-6 rounded-2xl bg-[#0F1626]/80 border border-slate-800 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
-              <Mail className="w-6 h-6" />
+          <div className="p-4 sm:p-6 rounded-2xl bg-[#0F1626]/80 border border-slate-800 flex items-start gap-3 sm:gap-4">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+              <Mail className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h4 className="font-bold text-white text-base">Email</h4>
-              <p className="text-xs text-slate-400 mt-0.5">support@streamallow.com</p>
+              <p className="text-xs text-slate-400 mt-0.5 break-all">support@streamallow.com</p>
               <p className="text-[11px] text-slate-500 mt-2">Average response time: &lt; 30 mins</p>
             </div>
           </div>
 
-          <div className="p-6 rounded-2xl bg-[#0F1626]/80 border border-slate-800 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-              <MessageCircle className="w-6 h-6" />
+          <div className="p-4 sm:p-6 rounded-2xl bg-[#0F1626]/80 border border-slate-800 flex items-start gap-3 sm:gap-4">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <MessageCircle className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h4 className="font-bold text-white text-base">Live Chat</h4>
               <p className="text-xs text-slate-400 mt-0.5">Available 24/7 in User Dashboard</p>
               <p className="text-[11px] text-slate-500 mt-2">Instant connection with streaming engineers</p>
             </div>
           </div>
 
-          <div className="p-6 rounded-2xl bg-[#0F1626]/80 border border-slate-800 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400 flex items-center justify-center shrink-0">
-              <Briefcase className="w-6 h-6" />
+          <div className="p-4 sm:p-6 rounded-2xl bg-[#0F1626]/80 border border-slate-800 flex items-start gap-3 sm:gap-4">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400 flex items-center justify-center shrink-0">
+              <Briefcase className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h4 className="font-bold text-white text-base">Business Inquiry</h4>
-              <p className="text-xs text-slate-400 mt-0.5">business@streamallow.com</p>
+              <p className="text-xs text-slate-400 mt-0.5 break-all">business@streamallow.com</p>
               <p className="text-[11px] text-slate-500 mt-2">Enterprise bulk streaming & custom agreements</p>
             </div>
           </div>
@@ -73,7 +73,7 @@ export const ContactPage: React.FC = () => {
 
         {/* Right Contact Form matching reference 9 */}
         <div className="lg:col-span-7">
-          <div className="p-8 rounded-2xl bg-[#0F1626] border border-slate-800">
+          <div className="p-5 sm:p-8 rounded-2xl bg-[#0F1626] border border-slate-800">
             {isSent ? (
               <div className="text-center py-12 space-y-4">
                 <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 mx-auto flex items-center justify-center">

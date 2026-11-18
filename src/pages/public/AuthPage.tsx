@@ -162,22 +162,22 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
   };
 
   return (
-    <div className="min-h-[85vh] flex items-center justify-center px-4 py-12">
-      <div className="w-full max-w-4xl bg-[#0D131F] border border-slate-800 rounded-3xl shadow-2xl overflow-hidden grid grid-cols-1 md:grid-cols-12">
+    <div className="min-h-[85vh] flex items-center justify-center px-3 sm:px-4 py-6 sm:py-12">
+      <div className="w-full max-w-4xl bg-[#0D131F] border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden grid grid-cols-1 md:grid-cols-12">
         {/* Left Visual Column matching reference 11 */}
-        <div className="md:col-span-5 relative p-8 bg-gradient-to-br from-[#161F33] to-[#0A0E18] flex flex-col justify-between overflow-hidden border-b md:border-b-0 md:border-r border-slate-800">
-          <div className="relative z-10 space-y-4">
-            <div className="flex items-center gap-3">
+        <div className="md:col-span-5 relative p-5 sm:p-8 bg-gradient-to-br from-[#161F33] to-[#0A0E18] flex flex-col justify-between overflow-hidden border-b md:border-b-0 md:border-r border-slate-800">
+          <div className="relative z-10 space-y-2 md:space-y-4">
+            <div className="flex items-center gap-2.5 sm:gap-3">
               <img
                 src="/logo-icon.png"
                 alt="Stream Allow Logo"
-                className="w-9 h-9 rounded-xl shadow-lg shadow-rose-500/25 object-contain"
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl shadow-lg shadow-rose-500/25 object-contain"
               />
-              <span className="text-xl font-extrabold tracking-tight text-white">Stream Allow</span>
+              <span className="text-lg sm:text-xl font-extrabold tracking-tight text-white">Stream Allow</span>
             </div>
 
-            <div className="pt-8 space-y-2">
-              <h2 className="text-2xl sm:text-3xl font-extrabold text-white">
+            <div className="pt-2 md:pt-8 space-y-1.5 md:space-y-2">
+              <h2 className="text-xl sm:text-3xl font-extrabold text-white">
                 {mode === 'login' ? 'Welcome Back' : 'Join Stream Allow'}
               </h2>
               <p className="text-xs sm:text-sm text-slate-400">
@@ -188,7 +188,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
             </div>
           </div>
 
-          <div className="relative z-10 pt-8 space-y-4">
+          <div className="hidden md:block relative z-10 pt-8 space-y-4">
             <div className="rounded-xl overflow-hidden border border-slate-700/60 shadow-xl">
               <img
                 src="https://images.unsplash.com/photo-1542751371-adc38448a05e?w=500&auto=format&fit=crop&q=80"
@@ -210,7 +210,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
         </div>
 
         {/* Right Form Column matching reference 11 */}
-        <div className="md:col-span-7 p-8 sm:p-10 flex flex-col justify-center">
+        <div className="md:col-span-7 p-5 sm:p-8 md:p-10 flex flex-col justify-center min-w-0">
           {/* Mode Switch Tabs */}
           <div className="flex border-b border-slate-800 mb-6">
             <button
@@ -241,7 +241,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
             {mode === 'register' && (
               <div className="space-y-1.5 pb-1">
                 <label className="block text-xs font-medium text-slate-300">Selected Plan</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 min-[380px]:grid-cols-3 gap-2">
                   {[
                     { id: 'basic', label: 'Basic', price: '৳990' },
                     { id: 'pro', label: 'Pro (Popular)', price: '৳2,990' },
@@ -345,7 +345,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
             )}
 
             {mode === 'login' ? (
-              <div className="flex items-center justify-between text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                 <span className="flex items-center gap-1.5 text-slate-400">
                   <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                   <span>Session login required</span>
@@ -409,8 +409,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
 
       {/* Forgot Password Modal */}
       {forgotModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
-          <div className="relative w-full max-w-md bg-[#0F1626] border border-slate-800 rounded-2xl p-6 space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md">
+          <div className="relative w-full max-w-md bg-[#0F1626] border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-white">Reset Password</h3>
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-300">
@@ -476,7 +476,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
                   />
                 </div>
 
-                <div className="flex items-center justify-between text-[11px]">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                   <span className="text-slate-300 font-medium">
                     {useRecoveryKey ? 'Server Recovery Key (ADMIN_RESET_KEY)' : 'Verification Reset Token'}
                   </span>
@@ -535,7 +535,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
                   />
                 </div>
 
-                <div className="flex gap-2 pt-1">
+                <div className="flex flex-wrap sm:flex-nowrap gap-2 pt-1">
                   <button
                     type="button"
                     onClick={() => setForgotStep('request')}
@@ -553,7 +553,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
                   <button
                     type="submit"
                     disabled={forgotLoading}
-                    className="flex-1 py-2 rounded-lg bg-[#FF1B6B] text-xs text-white font-bold disabled:opacity-50"
+                    className="w-full sm:w-auto flex-1 py-2 px-3 rounded-lg bg-[#FF1B6B] text-xs text-white font-bold disabled:opacity-50"
                   >
                     {forgotLoading ? 'Updating...' : 'Set New Password'}
                   </button>

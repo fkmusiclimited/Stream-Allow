@@ -86,36 +86,36 @@ export const HomePage: React.FC = () => {
   ];
 
   return (
-    <div className="space-y-24 pb-20 overflow-hidden">
+    <div className="space-y-16 sm:space-y-24 pb-16 sm:pb-20 overflow-x-clip">
       {/* Hero Section */}
-      <section className="relative pt-12 md:pt-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+      <section className="relative pt-8 sm:pt-12 md:pt-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
         {/* Glow ambient background effects */}
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[350px] bg-gradient-to-tr from-[#FF1B6B]/20 via-[#4F46E5]/15 to-transparent blur-[120px] rounded-full pointer-events-none" />
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[320px] sm:w-[600px] h-[250px] sm:h-[350px] bg-gradient-to-tr from-[#FF1B6B]/20 via-[#4F46E5]/15 to-transparent blur-[120px] rounded-full pointer-events-none" />
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 sm:gap-12 items-center">
           {/* Left Hero Copy */}
-          <div className="lg:col-span-6 space-y-6 text-left relative z-10">
+          <div className="lg:col-span-6 space-y-5 sm:space-y-6 text-left relative z-10 min-w-0">
             {/* YouTube Badge */}
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-red-600/10 border border-red-500/25 text-red-400 text-xs font-semibold">
-              <Youtube className="w-4 h-4 fill-current text-red-500" />
-              <span>YouTube Certified Streaming Platform</span>
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 sm:px-3.5 rounded-full bg-red-600/10 border border-red-500/25 text-red-400 text-[11px] sm:text-xs font-semibold max-w-full">
+              <Youtube className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current text-red-500 shrink-0" />
+              <span className="truncate">YouTube Certified Streaming Platform</span>
             </div>
 
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white leading-[1.12]">
+            <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white leading-[1.14]">
               Grow Your YouTube Live Stream with{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF1B6B] via-[#FF4585] to-[#E11D48]">
                 Stream Allow
               </span>
             </h1>
 
-            <p className="text-slate-300 text-base sm:text-lg leading-relaxed max-w-xl">
+            <p className="text-slate-300 text-sm sm:text-lg leading-relaxed max-w-xl">
               Automate, Manage and Grow Your YouTube Live Streams Easily. Perfect for music, radio, gaming, podcasts and 24/7 channels.
             </p>
 
-            <div className="flex flex-wrap items-center gap-4 pt-2">
+            <div className="flex flex-wrap items-center gap-3 sm:gap-4 pt-2">
               <button
                 onClick={() => navigate('public/register')}
-                className="px-7 py-3.5 rounded-xl font-bold text-white gradient-brand hover:opacity-95 shadow-xl shadow-rose-500/25 flex items-center gap-2.5 transition-all transform active:scale-95 cursor-pointer"
+                className="px-5 sm:px-7 py-3 sm:py-3.5 rounded-xl font-bold text-sm sm:text-base text-white gradient-brand hover:opacity-95 shadow-xl shadow-rose-500/25 flex items-center justify-center gap-2 sm:gap-2.5 transition-all transform active:scale-95 cursor-pointer"
               >
                 <span>Get Started</span>
                 <ArrowRight className="w-4 h-4" />
@@ -123,7 +123,7 @@ export const HomePage: React.FC = () => {
 
               <button
                 onClick={handleSeeDemo}
-                className="px-6 py-3.5 rounded-xl font-semibold text-slate-200 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 flex items-center gap-2.5 transition-all"
+                className="px-5 sm:px-6 py-3 sm:py-3.5 rounded-xl font-semibold text-sm sm:text-base text-slate-200 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 flex items-center justify-center gap-2 sm:gap-2.5 transition-all"
               >
                 <Play className="w-4 h-4 text-[#FF1B6B] fill-current" />
                 <span>See Demo</span>
@@ -131,31 +131,31 @@ export const HomePage: React.FC = () => {
             </div>
 
             {/* Quick trust metrics */}
-            <div className="pt-4 flex items-center gap-6 text-xs text-slate-400">
+            <div className="pt-2 sm:pt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-400">
               <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>No credit card needed</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>Instant channel sync</span>
               </div>
             </div>
           </div>
 
           {/* Right Hero Visual Mockup */}
-          <div className="lg:col-span-6 relative z-10">
+          <div className="lg:col-span-6 relative z-10 min-w-0">
             <div className="relative rounded-2xl p-1 bg-gradient-to-b from-slate-700/60 via-slate-800/40 to-slate-900/80 shadow-2xl">
               <div className="relative rounded-xl overflow-hidden bg-[#0D121E] border border-slate-800">
                 {/* Simulated Screen Header */}
-                <div className="px-4 py-3 bg-[#111827] border-b border-slate-800 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                    <span className="ml-2 text-xs font-mono text-slate-400">streamallow.cloud/live/control-center</span>
+                <div className="px-3 sm:px-4 py-2.5 sm:py-3 bg-[#111827] border-b border-slate-800 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
+                    <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-rose-500 shrink-0" />
+                    <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-amber-500 shrink-0" />
+                    <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                    <span className="ml-1 sm:ml-2 text-[10px] sm:text-xs font-mono text-slate-400 truncate">streamallow.cloud/live/control-center</span>
                   </div>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-600 text-white flex items-center gap-1">
+                  <span className="px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-bold bg-rose-600 text-white flex items-center gap-1 shrink-0 whitespace-nowrap">
                     <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
                     LIVE NOW
                   </span>
@@ -175,36 +175,36 @@ export const HomePage: React.FC = () => {
 
                   {/* Play overlay button */}
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-16 h-16 rounded-full bg-[#FF1B6B]/90 text-white flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform">
-                      <Play className="w-7 h-7 fill-current ml-1" />
+                    <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-[#FF1B6B]/90 text-white flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform">
+                      <Play className="w-5 h-5 sm:w-7 sm:h-7 fill-current ml-0.5 sm:ml-1" />
                     </div>
                   </div>
 
                   {/* Live overlay tags */}
-                  <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between text-xs text-white">
-                    <div>
-                      <p className="font-bold text-sm">{demoConfig.title}</p>
-                      <p className="text-slate-300 text-[11px]">Channel: {demoConfig.channelName} · {demoConfig.viewersText}</p>
+                  <div className="absolute bottom-2.5 left-2.5 right-2.5 sm:bottom-4 sm:left-4 sm:right-4 flex items-end justify-between gap-2 text-xs text-white">
+                    <div className="min-w-0">
+                      <p className="font-bold text-xs sm:text-sm truncate">{demoConfig.title}</p>
+                      <p className="text-slate-300 text-[10px] sm:text-[11px] truncate">Channel: {demoConfig.channelName} · {demoConfig.viewersText}</p>
                     </div>
-                    <div className="bg-black/60 px-2.5 py-1 rounded backdrop-blur border border-white/10 font-mono text-[11px]">
+                    <div className="bg-black/60 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded backdrop-blur border border-white/10 font-mono text-[10px] sm:text-[11px] shrink-0 whitespace-nowrap">
                       {demoConfig.resolution}
                     </div>
                   </div>
                 </div>
 
                 {/* Sub-bar stats inside mockup */}
-                <div className="p-4 bg-[#0A0E17] grid grid-cols-3 gap-2 text-center text-xs border-t border-slate-800/80">
-                  <div className="p-2 rounded bg-slate-900/60 border border-slate-800">
-                    <span className="text-slate-400 block text-[10px]">Bitrate</span>
-                    <span className="font-bold text-slate-100">4,500 kbps</span>
+                <div className="p-2.5 sm:p-4 bg-[#0A0E17] grid grid-cols-3 gap-1.5 sm:gap-2 text-center text-[11px] sm:text-xs border-t border-slate-800/80">
+                  <div className="p-1.5 sm:p-2 rounded bg-slate-900/60 border border-slate-800 min-w-0">
+                    <span className="text-slate-400 block text-[9px] sm:text-[10px]">Bitrate</span>
+                    <span className="font-bold text-slate-100 block truncate">4,500 kbps</span>
                   </div>
-                  <div className="p-2 rounded bg-slate-900/60 border border-slate-800">
-                    <span className="text-slate-400 block text-[10px]">Loop Status</span>
-                    <span className="font-bold text-emerald-400">Repeating (24/7)</span>
+                  <div className="p-1.5 sm:p-2 rounded bg-slate-900/60 border border-slate-800 min-w-0">
+                    <span className="text-slate-400 block text-[9px] sm:text-[10px]">Loop Status</span>
+                    <span className="font-bold text-emerald-400 block truncate">24/7 Loop</span>
                   </div>
-                  <div className="p-2 rounded bg-slate-900/60 border border-slate-800">
-                    <span className="text-slate-400 block text-[10px]">Health</span>
-                    <span className="font-bold text-emerald-400">Excellent</span>
+                  <div className="p-1.5 sm:p-2 rounded bg-slate-900/60 border border-slate-800 min-w-0">
+                    <span className="text-slate-400 block text-[9px] sm:text-[10px]">Health</span>
+                    <span className="font-bold text-emerald-400 block truncate">Excellent</span>
                   </div>
                 </div>
               </div>
@@ -215,21 +215,21 @@ export const HomePage: React.FC = () => {
 
       {/* Stats Counters Bar */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 p-8 rounded-2xl bg-[#0F1626]/80 border border-slate-800/80 backdrop-blur-md">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 p-5 sm:p-8 rounded-2xl bg-[#0F1626]/80 border border-slate-800/80 backdrop-blur-md">
           <div className="text-center space-y-1">
-            <div className="text-3xl sm:text-4xl font-extrabold text-white">10K+</div>
+            <div className="text-2xl sm:text-4xl font-extrabold text-white">10K+</div>
             <div className="text-xs sm:text-sm font-medium text-slate-400">Active Users</div>
           </div>
           <div className="text-center space-y-1">
-            <div className="text-3xl sm:text-4xl font-extrabold text-white">50M+</div>
+            <div className="text-2xl sm:text-4xl font-extrabold text-white">50M+</div>
             <div className="text-xs sm:text-sm font-medium text-slate-400">Live Views Generated</div>
           </div>
           <div className="text-center space-y-1">
-            <div className="text-3xl sm:text-4xl font-extrabold text-white">99.9%</div>
+            <div className="text-2xl sm:text-4xl font-extrabold text-white">99.9%</div>
             <div className="text-xs sm:text-sm font-medium text-slate-400">Uptime Reliability</div>
           </div>
           <div className="text-center space-y-1">
-            <div className="text-3xl sm:text-4xl font-extrabold text-white">24/7</div>
+            <div className="text-2xl sm:text-4xl font-extrabold text-white">24/7</div>
             <div className="text-xs sm:text-sm font-medium text-slate-400">Live Stream & Tech Support</div>
           </div>
         </div>
@@ -270,7 +270,7 @@ export const HomePage: React.FC = () => {
 
       {/* How it Works Preview on Home */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="p-8 sm:p-12 rounded-3xl bg-gradient-to-b from-[#101728] to-[#0A0E18] border border-slate-800 space-y-10">
+        <div className="p-5 sm:p-12 rounded-3xl bg-gradient-to-b from-[#101728] to-[#0A0E18] border border-slate-800 space-y-8 sm:space-y-10">
           <div className="text-center space-y-2">
             <span className="text-xs font-bold uppercase tracking-widest text-[#FF1B6B]">Fast Onboarding</span>
             <h3 className="text-2xl sm:text-3xl font-extrabold text-white">How Stream Allow Works</h3>
@@ -300,7 +300,7 @@ export const HomePage: React.FC = () => {
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
         <div className="text-center space-y-4 max-w-2xl mx-auto">
           <span className="text-xs font-bold uppercase tracking-widest text-[#FF1B6B]">Flexible Plans</span>
-          <h2 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+          <h2 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight">
             Simple & Affordable Pricing
           </h2>
           <p className="text-slate-400 text-sm sm:text-base">
@@ -308,10 +308,10 @@ export const HomePage: React.FC = () => {
           </p>
 
           {/* Currency Switcher */}
-          <div className="inline-flex items-center gap-2 p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold">
+          <div className="flex flex-col min-[420px]:inline-flex min-[420px]:flex-row items-stretch sm:items-center gap-1.5 sm:gap-2 p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold max-w-full">
             <button
               onClick={() => setCurrency('BDT')}
-              className={`px-4 py-2 rounded-lg transition-all cursor-pointer ${
+              className={`px-3 sm:px-4 py-2 rounded-lg transition-all cursor-pointer ${
                 currency === 'BDT'
                   ? 'bg-gradient-to-r from-[#FF1B6B] to-[#E11D48] text-white shadow-md'
                   : 'text-slate-400 hover:text-white'
@@ -321,7 +321,7 @@ export const HomePage: React.FC = () => {
             </button>
             <button
               onClick={() => setCurrency('USD')}
-              className={`px-4 py-2 rounded-lg transition-all cursor-pointer ${
+              className={`px-3 sm:px-4 py-2 rounded-lg transition-all cursor-pointer ${
                 currency === 'USD'
                   ? 'bg-gradient-to-r from-[#FF1B6B] to-[#E11D48] text-white shadow-md'
                   : 'text-slate-400 hover:text-white'
@@ -339,7 +339,7 @@ export const HomePage: React.FC = () => {
             return (
               <div
                 key={p.id}
-                className={`relative rounded-3xl p-8 flex flex-col justify-between transition-all ${
+                className={`relative rounded-3xl p-6 sm:p-8 flex flex-col justify-between transition-all ${
                   isPro
                     ? 'bg-gradient-to-b from-[#141C2E] to-[#0D1322] border-2 border-[#FF1B6B] shadow-2xl shadow-rose-950/40 md:-translate-y-2'
                     : 'bg-[#0F1626]/80 border border-slate-800 hover:border-slate-700'
@@ -395,16 +395,16 @@ export const HomePage: React.FC = () => {
 
       {/* CTA Banner */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="relative rounded-3xl overflow-hidden p-8 sm:p-12 bg-gradient-to-r from-[#FF1B6B]/90 via-[#E11D48] to-[#9333EA] text-white shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
+        <div className="relative rounded-3xl overflow-hidden p-6 sm:p-12 bg-gradient-to-r from-[#FF1B6B]/90 via-[#E11D48] to-[#9333EA] text-white shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="space-y-2 text-center md:text-left">
-            <h3 className="text-2xl sm:text-3xl font-extrabold">Ready to Boost Your YouTube Watch Time?</h3>
-            <p className="text-sm text-white/90 max-w-lg">
+            <h3 className="text-xl sm:text-3xl font-extrabold">Ready to Boost Your YouTube Watch Time?</h3>
+            <p className="text-xs sm:text-sm text-white/90 max-w-lg">
               Join 10,000+ creators and media channels broadcasting live around the clock with Stream Allow.
             </p>
           </div>
           <button
             onClick={() => navigate('public/register')}
-            className="px-8 py-3.5 rounded-xl font-bold text-slate-900 bg-white hover:bg-slate-100 shadow-xl transition-all transform active:scale-95 shrink-0 cursor-pointer"
+            className="w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-3.5 rounded-xl font-bold text-sm sm:text-base text-slate-900 bg-white hover:bg-slate-100 shadow-xl transition-all transform active:scale-95 shrink-0 cursor-pointer"
           >
             Start Free Trial
           </button>
@@ -413,26 +413,26 @@ export const HomePage: React.FC = () => {
 
       {/* Homepage Dedicated Demo Preview Modal (Isolated from Dashboard Real Streams) */}
       {isDemoModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/85 backdrop-blur-md animate-fadeIn">
-          <div className="relative w-full max-w-4xl bg-[#0D131F] border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-fadeIn">
+          <div className="relative w-full max-w-4xl bg-[#0D131F] border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
             {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-[#111827]/90">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#FF1B6B] to-[#FF4585] flex items-center justify-center text-white shadow-lg shadow-rose-500/20">
-                  <Radio className="w-5 h-5 animate-pulse" />
+            <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4 border-b border-slate-800 bg-[#111827]/90">
+              <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-[#FF1B6B] to-[#FF4585] flex items-center justify-center text-white shadow-lg shadow-rose-500/20 shrink-0">
+                  <Radio className="w-4 h-4 sm:w-5 sm:h-5 animate-pulse" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-white text-base sm:text-lg">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                    <h3 className="font-bold text-white text-sm sm:text-lg truncate">
                       {demoConfig.title}
                     </h3>
-                    <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-600 text-white uppercase tracking-wider flex items-center gap-1">
+                    <span className="px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-bold bg-rose-600 text-white uppercase tracking-wider flex items-center gap-1 shrink-0">
                       <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
                       DEMO PREVIEW
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400">
-                    Channel: {demoConfig.channelName} · 24/7 Cloud RTMP Simulation · {demoConfig.resolution} · Zero Buffer
+                  <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                    Channel: {demoConfig.channelName} · {demoConfig.resolution} · Zero Buffer
                   </p>
                 </div>
               </div>
@@ -440,7 +440,7 @@ export const HomePage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setIsDemoModalOpen(false)}
-                className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
                 title="Close demo"
               >
                 <X className="w-5 h-5" />
@@ -461,20 +461,23 @@ export const HomePage: React.FC = () => {
                 playsInline
               />
 
-              {/* Top simulation badge */}
-              <div className="absolute top-4 left-4 flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 text-xs text-white pointer-events-none">
-                <Users className="w-3.5 h-3.5 text-rose-400" />
-                <span>{demoConfig.viewersText} in demo</span>
-              </div>
+              {/* Top simulation badges */}
+              <div className="absolute top-2.5 inset-x-2.5 sm:top-4 sm:inset-x-4 flex items-center justify-between gap-2 pointer-events-none">
+                <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-md px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full border border-white/10 text-[10px] sm:text-xs text-white min-w-0">
+                  <Users className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-rose-400 shrink-0" />
+                  <span className="truncate">{demoConfig.viewersText}</span>
+                </div>
 
-              <div className="absolute top-4 right-4 flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 text-xs text-emerald-400 pointer-events-none">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Cloud Server Active · 0% Buffer</span>
+                <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-md px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full border border-white/10 text-[10px] sm:text-xs text-emerald-400 shrink-0">
+                  <ShieldCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                  <span className="hidden min-[420px]:inline">Cloud Server Active · </span>
+                  <span>0% Buffer</span>
+                </div>
               </div>
 
               {/* Bottom Player Controls Bar */}
-              <div className="absolute bottom-0 inset-x-0 p-4 bg-gradient-to-t from-black/95 via-black/60 to-transparent flex items-center justify-between z-10">
-                <div className="flex items-center gap-3">
+              <div className="absolute bottom-0 inset-x-0 p-2.5 sm:p-4 bg-gradient-to-t from-black/95 via-black/60 to-transparent flex items-center justify-between gap-2 z-10">
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                   <button
                     type="button"
                     onClick={() => {
@@ -487,9 +490,9 @@ export const HomePage: React.FC = () => {
                       }
                       setIsDemoPlaying(!isDemoPlaying);
                     }}
-                    className="w-9 h-9 rounded-full bg-white text-slate-900 flex items-center justify-center hover:bg-slate-200 transition-colors shadow-lg cursor-pointer"
+                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white text-slate-900 flex items-center justify-center hover:bg-slate-200 transition-colors shadow-lg cursor-pointer shrink-0"
                   >
-                    {isDemoPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+                    {isDemoPlaying ? <Pause className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" /> : <Play className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current ml-0.5" />}
                   </button>
 
                   <button
@@ -500,25 +503,25 @@ export const HomePage: React.FC = () => {
                       }
                       setIsDemoMuted(!isDemoMuted);
                     }}
-                    className="p-2 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                    className="p-1.5 sm:p-2 text-slate-300 hover:text-white transition-colors cursor-pointer shrink-0"
                     title={isDemoMuted ? 'Unmute' : 'Mute'}
                   >
-                    {isDemoMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                    {isDemoMuted ? <VolumeX className="w-4 h-4 sm:w-5 sm:h-5" /> : <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />}
                   </button>
 
-                  <span className="text-xs text-slate-300 font-mono">
+                  <span className="hidden sm:inline text-xs text-slate-300 font-mono truncate">
                     {isDemoPlaying ? 'PREVIEW ACTIVE' : 'PAUSED'} · 1080p60 · 4,500 kbps
                   </span>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                   <button
                     type="button"
                     onClick={() => {
                       setIsDemoModalOpen(false);
                       navigate('public/register');
                     }}
-                    className="px-4 py-2 rounded-xl text-xs font-bold text-white gradient-brand hover:opacity-95 shadow-md shadow-rose-600/30 flex items-center gap-1.5 cursor-pointer"
+                    className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold text-white gradient-brand hover:opacity-95 shadow-md shadow-rose-600/30 flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
                   >
                     <span>Get Started Free</span>
                     <ArrowRight className="w-3.5 h-3.5" />

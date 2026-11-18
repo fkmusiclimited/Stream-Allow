@@ -12,10 +12,10 @@ export const FaqPage: React.FC = () => {
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-12">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-16 space-y-10 sm:space-y-12">
       <div className="text-center space-y-4">
         <span className="text-xs font-bold uppercase tracking-widest text-[#FF1B6B]">Help Center</span>
-        <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight">
+        <h1 className="text-2xl sm:text-5xl font-extrabold text-white tracking-tight">
           Frequently Asked Questions
         </h1>
         <p className="text-slate-400 text-sm sm:text-base">
@@ -38,7 +38,7 @@ export const FaqPage: React.FC = () => {
             >
               <button
                 onClick={() => toggleFaq(idx)}
-                className="w-full py-4 px-6 text-left flex items-center justify-between gap-4 font-bold text-sm sm:text-base text-white"
+                className="w-full py-3.5 px-4 sm:py-4 sm:px-6 text-left flex items-center justify-between gap-3 sm:gap-4 font-bold text-sm sm:text-base text-white"
               >
                 <span>{item.q}</span>
                 <span className={`p-1.5 rounded-lg shrink-0 transition-colors ${isOpen ? 'bg-[#FF1B6B] text-white' : 'bg-slate-800 text-slate-400'}`}>
@@ -47,7 +47,7 @@ export const FaqPage: React.FC = () => {
               </button>
 
               {isOpen && (
-                <div className="px-6 pb-5 pt-1 text-xs sm:text-sm text-slate-400 leading-relaxed border-t border-slate-800/60 mt-1">
+                <div className="px-4 sm:px-6 pb-4 sm:pb-5 pt-1 text-xs sm:text-sm text-slate-400 leading-relaxed border-t border-slate-800/60 mt-1">
                   {item.a}
                 </div>
               )}

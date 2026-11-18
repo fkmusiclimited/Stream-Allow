@@ -70,11 +70,11 @@ export const FeaturesPage: React.FC = () => {
   ];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-20">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-16 space-y-12 sm:space-y-20">
       {/* Header */}
       <div className="text-center space-y-4 max-w-3xl mx-auto">
         <span className="text-xs font-bold uppercase tracking-widest text-[#FF1B6B]">Features</span>
-        <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight">
+        <h1 className="text-2xl sm:text-5xl font-extrabold text-white tracking-tight">
           Powerful Features for YouTube Live Streaming
         </h1>
         <p className="text-slate-400 text-sm sm:text-base leading-relaxed">
@@ -89,7 +89,7 @@ export const FeaturesPage: React.FC = () => {
           return (
             <div
               key={idx}
-              className="p-8 rounded-2xl bg-[#0F1626]/80 border border-slate-800 hover:border-slate-700 hover:bg-[#121B2F] transition-all group space-y-4"
+              className="p-6 sm:p-8 rounded-2xl bg-[#0F1626]/80 border border-slate-800 hover:border-slate-700 hover:bg-[#121B2F] transition-all group space-y-4"
             >
               <div className={`w-14 h-14 rounded-2xl ${feat.bgColor} ${feat.borderColor} border ${feat.color} flex items-center justify-center group-hover:scale-110 transition-transform`}>
                 <Icon className="w-7 h-7" />
@@ -106,8 +106,8 @@ export const FeaturesPage: React.FC = () => {
       </div>
 
       {/* Deep Dive Feature Highlights */}
-      <div className="p-8 sm:p-12 rounded-3xl bg-[#0D1322] border border-slate-800 grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
-        <div className="space-y-6">
+      <div className="p-5 sm:p-12 rounded-3xl bg-[#0D1322] border border-slate-800 grid grid-cols-1 lg:grid-cols-2 gap-8 sm:gap-10 items-center">
+        <div className="space-y-5 sm:space-y-6">
           <span className="text-xs font-bold uppercase tracking-widest text-emerald-400">High Reliability</span>
           <h2 className="text-2xl sm:text-3xl font-extrabold text-white">
             Never Let Your YouTube Live Stream Stop
@@ -138,25 +138,25 @@ export const FeaturesPage: React.FC = () => {
           </button>
         </div>
 
-        <div className="rounded-2xl bg-black/60 border border-slate-800 p-6 space-y-4">
-          <div className="flex items-center justify-between text-xs border-b border-slate-800 pb-3">
+        <div className="rounded-2xl bg-black/60 border border-slate-800 p-4 sm:p-6 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs border-b border-slate-800 pb-3">
             <span className="font-semibold text-slate-300">Cloud Stream Monitor</span>
             <span className="text-emerald-400 font-mono">Status: Optimal</span>
           </div>
           <div className="space-y-3 font-mono text-xs">
-            <div className="flex justify-between text-slate-400">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-slate-400">
               <span>Encoding Protocol:</span>
               <span className="text-white">RTMPS / TLS 1.3</span>
             </div>
-            <div className="flex justify-between text-slate-400">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-slate-400">
               <span>Output Resolution:</span>
               <span className="text-white">1920x1080 @ 60fps</span>
             </div>
-            <div className="flex justify-between text-slate-400">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-slate-400">
               <span>Keyframe Interval:</span>
               <span className="text-white">2.00 seconds (GOP 120)</span>
             </div>
-            <div className="flex justify-between text-slate-400">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-slate-400">
               <span>Audio Format:</span>
               <span className="text-white">AAC Stereo 256kbps 48kHz</span>
             </div>

@@ -8,14 +8,26 @@ import { fileURLToPath } from 'url';
 import { initDatabaseConnection, closeDatabaseConnection, isDbConnected, query, saveDbSnapshot } from './src/server/db/db';
 import {
   getStreamTableName,
+  getDbSchemaMeta,
+  hasTable,
   hasColumn,
+  getColumnMeta,
   isUuidColumn,
+  isIntegerColumn,
   isValidUuid,
   pickColumn,
   getPlaylistVideosOrderCol,
+  introspectDatabaseSchema,
   resolveStreamStatusForDb,
   normalizeStreamStatusFromDb,
   resolvePlaylistStatusForDb,
+  resolveUserRoleForDb,
+  resolveUserStatusForDb,
+  normalizeUserStatusFromDb,
+  resolveUserPlanForDb,
+  normalizeUserPlanFromDb,
+  formatValueForColumnType,
+  getMissingRequiredColumnFallbacks,
   buildCompatibleInsert,
   buildCompatibleUpdate,
   buildEncryptedStreamKeyColumns,
@@ -374,6 +386,11 @@ async function startServer() {
     res.json({ success: true, metrics });
   });
 
+  app.get('/api/system/capabilities', (_req, res) => {
+    const capabilities = streamManager.getHostCapabilities();
+    res.json({ success: true, capabilities });
+  });
+
   app.get('/api/system/processes', authenticateToken, (_req, res) => {
     const processes = streamManager.getAllActiveProcesses();
     res.json({ success: true, processes });
@@ -393,41 +410,120 @@ async function startServer() {
     }
 
     try {
+      if (!getDbSchemaMeta().initialized || !hasTable('users')) {
+        await introspectDatabaseSchema(query);
+      }
+
       const normalizedEmail = String(email).trim().toLowerCase();
       const existing = await query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [normalizedEmail]);
       if (existing.rows.length > 0) {
         return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
       }
 
+      const nowDate = new Date();
       const passwordHash = await hashPassword(cleanPass);
-      const newId = crypto.randomUUID();
       const userName = (name ? String(name).trim() : '') || normalizedEmail.split('@')[0];
-      const role = 'user';
-      const plan = (req.body.plan && ['Basic', 'Pro', 'Business'].includes(req.body.plan)) ? req.body.plan : 'Basic';
-      const status = 'Inactive';
-      const joinedDate = 'Today';
+      const requestedPlan: 'Basic' | 'Pro' | 'Business' =
+        req.body.plan && ['Basic', 'Pro', 'Business'].includes(req.body.plan) ? req.body.plan : 'Basic';
 
-      const insertQ = buildCompatibleInsert(
-        'users',
-        [
-          ['id', newId],
-          ['name', userName],
-          ['email', normalizedEmail],
-          ['password_hash', passwordHash],
-          ['role', role],
-          ['plan', plan],
-          ['status', status],
-          ['joined_date', joinedDate]
-        ],
-        {
-          rawTimestampColumns: ['created_at', 'updated_at'],
-          returning: 'id, name, email, role, plan, status'
+      const dbRole = resolveUserRoleForDb('user');
+      const dbPlan = resolveUserPlanForDb(requestedPlan);
+      const dbStatus = resolveUserStatusForDb('Inactive');
+
+      const columnValues: Array<[string, any]> = [];
+      const idMeta = getColumnMeta('users', 'id');
+
+      if (hasColumn('users', 'id')) {
+        if (isIntegerColumn('users', 'id')) {
+          if (!idMeta?.hasDefault && !idMeta?.isIdentity) {
+            const nextIdRes = await query<{ next_id: string | number }>('SELECT COALESCE(MAX(id), 0)::bigint + 1 AS next_id FROM users');
+            columnValues.push(['id', Number(nextIdRes.rows[0]?.next_id || 1)]);
+          }
+        } else {
+          let newId: string = crypto.randomUUID();
+          if (idMeta?.maxLength && idMeta.maxLength > 0 && newId.length > idMeta.maxLength) {
+            newId = newId.replace(/-/g, '').slice(0, idMeta.maxLength);
+          }
+          columnValues.push(['id', newId]);
         }
-      );
+      }
+
+      const nameCol = pickColumn('users', ['name', 'full_name', 'display_name']);
+      if (nameCol) {
+        columnValues.push([nameCol, userName]);
+      }
+
+      columnValues.push(['email', normalizedEmail]);
+
+      const passwordCol = pickColumn('users', ['password_hash', 'hashed_password', 'password', 'pass_hash']) || 'password_hash';
+      columnValues.push([passwordCol, passwordHash]);
+
+      if (hasColumn('users', 'role')) {
+        columnValues.push(['role', dbRole]);
+      }
+      if (hasColumn('users', 'plan')) {
+        columnValues.push(['plan', dbPlan]);
+      }
+      if (hasColumn('users', 'status')) {
+        columnValues.push(['status', dbStatus]);
+      }
+      if (hasColumn('users', 'joined_date')) {
+        columnValues.push([
+          'joined_date',
+          formatValueForColumnType('users', 'joined_date', { date: nowDate, stringFallback: 'Today' })
+        ]);
+      }
+
+      let usernameCandidate = normalizedEmail
+        .split('@')[0]
+        .replace(/[^a-zA-Z0-9_]/g, '_')
+        .replace(/^_+|_+$/g, '') || 'creator';
+      const usernameCol = pickColumn('users', ['username', 'user_name', 'handle']);
+      if (usernameCol) {
+        const uMeta = getColumnMeta('users', usernameCol);
+        if (uMeta && !uMeta.isNullable && !uMeta.hasDefault) {
+          try {
+            const uExists = await query(`SELECT 1 FROM users WHERE LOWER("${usernameCol}") = LOWER($1) LIMIT 1`, [usernameCandidate]);
+            if (uExists.rows.length > 0) {
+              usernameCandidate = `${usernameCandidate}_${crypto.randomBytes(2).toString('hex')}`;
+            }
+          } catch {}
+        }
+      }
+
+      const providedSet = new Set(columnValues.map(([col]) => col));
+      const requiredFallbacks = getMissingRequiredColumnFallbacks('users', providedSet, {
+        userName,
+        email: normalizedEmail,
+        passwordHash,
+        usernameCandidate,
+        now: nowDate,
+        resolvedPlan: dbPlan,
+        resolvedStatus: dbStatus,
+        resolvedRole: dbRole
+      });
+      for (const pair of requiredFallbacks) {
+        columnValues.push(pair);
+      }
+
+      const insertQ = buildCompatibleInsert('users', columnValues, {
+        rawTimestampColumns: ['created_at', 'updated_at'],
+        returning: '*'
+      });
       const insertRes = await query(insertQ.sql, insertQ.params);
       await saveDbSnapshot().catch(() => {});
 
-      const user = insertRes.rows[0];
+      const row = insertRes.rows[0] || {};
+      const resolvedId = String(row.id ?? columnValues.find(([c]) => c === 'id')?.[1] ?? normalizedEmail);
+      const user = {
+        id: resolvedId,
+        name: row.name || row.full_name || row.display_name || row.username || userName,
+        email: row.email || normalizedEmail,
+        role: 'user' as const,
+        plan: normalizeUserPlanFromDb(row.plan, requestedPlan),
+        status: normalizeUserStatusFromDb(row.status, 'Inactive')
+      };
+
       const token = signToken({
         id: user.id,
         name: user.name,
@@ -442,7 +538,34 @@ async function startServer() {
         token
       });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      console.error('[Auth Register Error]', {
+        code: err?.code,
+        detail: err?.detail,
+        constraint: err?.constraint,
+        column: err?.column,
+        message: err?.message
+      });
+
+      if (err?.code === '23505') {
+        const detailStr = `${err?.constraint || ''} ${err?.detail || ''}`.toLowerCase();
+        const dupMsg = detailStr.includes('email')
+          ? 'An account with this email already exists.'
+          : detailStr.includes('username')
+          ? 'This username is already taken. Please try again.'
+          : 'An account with these details already exists.';
+        return res.status(409).json({
+          success: false,
+          message: dupMsg,
+          error: err?.message || dupMsg
+        });
+      }
+
+      const errMsg = err?.message || 'Unable to create account.';
+      res.status(500).json({
+        success: false,
+        message: `Registration failed: ${errMsg}`,
+        error: errMsg
+      });
     }
   });
 

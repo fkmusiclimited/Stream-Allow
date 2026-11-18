@@ -6,23 +6,23 @@ export const AboutPage: React.FC = () => {
   const { navigate } = useApp();
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-20">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-16 space-y-12 sm:space-y-20">
       {/* Top Hero */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
-        <div className="lg:col-span-7 space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 sm:gap-12 items-center">
+        <div className="lg:col-span-7 space-y-5 sm:space-y-6">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FF1B6B]/10 border border-[#FF1B6B]/30 text-[#FF1B6B] text-xs font-bold uppercase tracking-wider">
             About Us
           </div>
-          <h1 className="text-4xl sm:text-5xl font-extrabold text-white tracking-tight leading-tight">
+          <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight leading-tight">
             We Help Creators Go Live Easily and Grow Faster
           </h1>
-          <p className="text-slate-300 text-base sm:text-lg leading-relaxed">
+          <p className="text-slate-300 text-sm sm:text-lg leading-relaxed">
             Stream Allow is a modern platform designed for YouTube creators, music labels, radio stations, and businesses to manage and grow their live streams easily. Our mission is to make live streaming simple, powerful and accessible to everyone.
           </p>
-          <div className="flex items-center gap-4 pt-2">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4 pt-2">
             <button
               onClick={() => navigate('public/pricing')}
-              className="px-6 py-3 rounded-xl font-bold text-white gradient-brand hover:opacity-95 shadow-lg shadow-rose-500/20 flex items-center gap-2 text-sm"
+              className="px-5 sm:px-6 py-3 rounded-xl font-bold text-white gradient-brand hover:opacity-95 shadow-lg shadow-rose-500/20 flex items-center gap-2 text-xs sm:text-sm"
             >
               <span>Explore Plans</span>
               <ArrowRight className="w-4 h-4" />
@@ -41,7 +41,7 @@ export const AboutPage: React.FC = () => {
             <img
               src="https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?w=800&auto=format&fit=crop&q=80"
               alt="Stream Allow Creator Workstation"
-              className="rounded-xl w-full h-[360px] object-cover filter brightness-90"
+              className="rounded-xl w-full h-60 sm:h-[360px] object-cover filter brightness-90"
             />
             <div className="absolute bottom-4 left-4 right-4 p-4 rounded-xl bg-slate-950/80 backdrop-blur border border-white/10 text-xs text-slate-200">
               <span className="font-bold text-white block">Engineered for Zero Downtime</span>
@@ -88,7 +88,7 @@ export const AboutPage: React.FC = () => {
       </div>
 
       {/* Team / Story highlight */}
-      <div className="p-8 sm:p-10 rounded-2xl bg-slate-900/50 border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-6">
+      <div className="p-6 sm:p-10 rounded-2xl bg-slate-900/50 border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-6 text-center md:text-left">
         <div className="space-y-1">
           <h4 className="text-lg font-bold text-white">Built by Streamers, for Streamers</h4>
           <p className="text-xs sm:text-sm text-slate-400">

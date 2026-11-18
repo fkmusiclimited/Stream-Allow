@@ -277,16 +277,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [users, setUsers] = useState<User[]>([]);
 
-  // Safe response parser to prevent "Rate exceeded" JSON parse errors
   const safeParseResponse = async (res: Response): Promise<any> => {
     try {
       const text = await res.text();
-      if (!text || res.status === 429 || text.includes('Rate exceeded')) {
-        return { success: false, rateExceeded: true, error: 'Request rate limit reached. Please wait a moment.' };
+      if (res.status === 429 || (text && text.includes('Rate exceeded'))) {
+        return {
+          success: false,
+          rateExceeded: true,
+          message: 'Request rate limit reached. Please wait a moment.',
+          error: 'Request rate limit reached. Please wait a moment.'
+        };
+      }
+      if (!text) {
+        return {
+          success: false,
+          error: res.ok ? 'Empty response from server.' : `Server error (HTTP ${res.status}).`
+        };
       }
       return JSON.parse(text);
     } catch {
-      return { success: false, error: 'Failed to parse response JSON.' };
+      return {
+        success: false,
+        error: res.status >= 400
+          ? `Server returned HTTP ${res.status}${res.statusText ? ` (${res.statusText})` : ''}.`
+          : 'Failed to parse response JSON.'
+      };
     }
   };
 
@@ -821,7 +836,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return true;
       }
 
-      showToast(data?.message || 'Registration failed.', 'error');
+      if (data?.rateExceeded) {
+        showToast(data?.message || data?.error || 'Too many registration requests. Please wait a moment and try again.', 'error');
+      } else {
+        showToast(data?.message || data?.error || 'Registration failed.', 'error');
+      }
       return false;
     } catch (err: any) {
       showToast(`Registration failed: ${err?.message || 'Network error'}`, 'error');

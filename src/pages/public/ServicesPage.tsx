@@ -30,10 +30,10 @@ export const ServicesPage: React.FC = () => {
   ];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-16">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-16 space-y-12 sm:space-y-16">
       <div className="text-center space-y-4 max-w-2xl mx-auto">
         <span className="text-xs font-bold uppercase tracking-widest text-[#FF1B6B]">Solutions</span>
-        <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight">
+        <h1 className="text-2xl sm:text-5xl font-extrabold text-white tracking-tight">
           Our Services
         </h1>
         <p className="text-slate-400 text-sm sm:text-base">
@@ -97,7 +97,7 @@ export const ServicesPage: React.FC = () => {
       </div>
 
       {/* Enterprise Custom Channels */}
-      <div className="p-8 sm:p-10 rounded-2xl bg-gradient-to-r from-slate-900 to-[#10192A] border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-6">
+      <div className="p-6 sm:p-10 rounded-2xl bg-gradient-to-r from-slate-900 to-[#10192A] border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-6 text-center md:text-left">
         <div className="space-y-2">
           <h3 className="text-xl font-bold text-white">Need a Dedicated 24/7 Channel Manager?</h3>
           <p className="text-xs sm:text-sm text-slate-400 max-w-xl">

@@ -13,10 +13,10 @@ export const BlogPage: React.FC = () => {
     : BLOG_POSTS.filter(p => p.category.toLowerCase() === selectedCategory.toLowerCase());
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-12">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-16 space-y-10 sm:space-y-12">
       <div className="text-center space-y-4 max-w-2xl mx-auto">
         <span className="text-xs font-bold uppercase tracking-widest text-[#FF1B6B]">Knowledge Hub</span>
-        <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight">
+        <h1 className="text-2xl sm:text-5xl font-extrabold text-white tracking-tight">
           Our Latest Articles
         </h1>
         <p className="text-slate-400 text-sm sm:text-base">
@@ -24,7 +24,7 @@ export const BlogPage: React.FC = () => {
         </p>
 
         {/* Filter Tabs matching reference 7 */}
-        <div className="flex items-center justify-center gap-2 pt-2">
+        <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
           {(['All', 'Tips', 'Guides', 'Updates'] as const).map((cat) => (
             <button
               key={cat}
@@ -98,44 +98,44 @@ export const BlogPage: React.FC = () => {
 
       {/* Full Article Reader Modal */}
       {readingPost && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md">
           <div className="relative w-full max-w-2xl bg-[#0D131F] border border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-[#111827]">
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <BookOpen className="w-4 h-4 text-[#FF1B6B]" />
-                <span>Stream Allow Knowledge Base</span>
+            <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-800 bg-[#111827]">
+              <div className="flex items-center gap-2 text-xs text-slate-400 min-w-0">
+                <BookOpen className="w-4 h-4 text-[#FF1B6B] shrink-0" />
+                <span className="truncate">Stream Allow Knowledge Base</span>
               </div>
               <button
                 onClick={() => setReadingPost(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 shrink-0"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto space-y-6">
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-5 sm:space-y-6">
               <img
                 src={readingPost.image}
                 alt={readingPost.title}
-                className="w-full h-56 object-cover rounded-xl"
+                className="w-full h-44 sm:h-56 object-cover rounded-xl"
               />
 
               <div className="space-y-2">
-                <div className="flex items-center gap-3 text-xs text-slate-400">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
                   <span className="text-[#FF1B6B] font-bold">{readingPost.category}</span>
                   <span>·</span>
                   <span>{readingPost.date}</span>
                   <span>·</span>
                   <span>{readingPost.readTime}</span>
                 </div>
-                <h2 className="text-2xl font-extrabold text-white">{readingPost.title}</h2>
+                <h2 className="text-xl sm:text-2xl font-extrabold text-white">{readingPost.title}</h2>
               </div>
 
-              <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-line border-t border-slate-800 pt-4">
+              <div className="text-xs sm:text-sm text-slate-300 leading-relaxed whitespace-pre-line border-t border-slate-800 pt-4">
                 {readingPost.content}
               </div>
 
-              <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
+              <div className="pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3">
                 <button
                   onClick={() => {
                     navigator.clipboard?.writeText(window.location.href);
