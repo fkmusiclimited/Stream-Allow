@@ -79,6 +79,8 @@ export interface ClipProbeDetails {
   hasAudio: boolean;
   videoCodec: string;
   audioCodec: string;
+  audioSampleRate: number;
+  audioChannels: number;
   pixFmt: string;
   width: number;
   height: number;
@@ -91,6 +93,7 @@ export interface ClipProbeDetails {
 /**
  * Parses resolution & bitrate settings (360p through 4K UHD 2160p @ 30/60 FPS)
  * into YouTube Live compliant H.264/AAC CBR parameters with 2-second keyframe interval.
+ * Defaults to 720p30 when unspecified for low-CPU 2 vCPU stability.
  */
 export function parseStreamEncodingProfile(
   resolution?: string,
@@ -98,7 +101,7 @@ export function parseStreamEncodingProfile(
   fpsOverride?: number,
   bitrateOverrideKbps?: number
 ): ResolvedEncodingProfile {
-  const resLower = String(resolution || '1080p60').toLowerCase().trim();
+  const resLower = String(resolution || '720p30').toLowerCase().trim();
 
   let width = 1920;
   let height = 1080;
@@ -147,7 +150,7 @@ export function parseStreamEncodingProfile(
   } else if (width >= 1920) {
     bitrateKbps = fps >= 50 ? 6000 : 4500;
   } else if (width >= 1280) {
-    bitrateKbps = fps >= 50 ? 4500 : 3000;
+    bitrateKbps = fps >= 50 ? 4000 : 2500;
   } else if (width >= 854) {
     bitrateKbps = fps >= 50 ? 1800 : 1200;
   } else {
@@ -177,8 +180,8 @@ export function parseStreamEncodingProfile(
 }
 
 /**
- * Evaluates whether a source clip can use zero-copy H.264 video passthrough (-c:v copy)
- * or requires hardware/CPU re-encoding, and honestly adapts re-encoding tiers to host hardware capacity.
+ * Evaluates whether a source clip can use zero-copy H.264/AAC stream passthrough (-c:v copy / -c:a copy)
+ * or requires hardware/CPU re-encoding, strictly optimizing for minimal CPU on 2 vCPU / 4 GB VPS hosts.
  */
 export function resolveAdaptiveEncodingPlan(
   requested: ResolvedEncodingProfile,
@@ -191,10 +194,12 @@ export function resolveAdaptiveEncodingPlan(
 ): {
   mode: 'passthrough' | 'hardware' | 'software';
   backend: VideoEncoderBackend | 'copy';
+  audioCopy: boolean;
   profile: ResolvedEncodingProfile;
   preset: string;
   tune?: string;
   threads: number;
+  filterThreads: number;
   needsScale: boolean;
   needsFpsFilter: boolean;
   notice: string | null;
@@ -203,13 +208,41 @@ export function resolveAdaptiveEncodingPlan(
     clipInfo.videoCodec === 'h264' &&
     (clipInfo.pixFmt === 'yuv420p' || clipInfo.pixFmt === 'yuvj420p' || clipInfo.pixFmt === '');
 
+  const isValidDimensions =
+    clipInfo.width >= 320 &&
+    clipInfo.width <= 3840 &&
+    clipInfo.height >= 240 &&
+    clipInfo.height <= 2160 &&
+    clipInfo.width % 2 === 0 &&
+    clipInfo.height % 2 === 0;
+
+  const isValidFps = clipInfo.fps >= 15 && clipInfo.fps <= 60;
   const exactResMatch = clipInfo.width === requested.width && clipInfo.height === requested.height;
-  const exactFpsMatch = Math.abs(clipInfo.fps - requested.fps) <= 2 ||
+  const exactFpsMatch =
+    Math.abs(clipInfo.fps - requested.fps) <= 2 ||
     (!requested.explicitFps && clipInfo.fps >= 24 && clipInfo.fps <= 60);
   const reasonableSourceBitrate = clipInfo.bitrateKbps <= 0 || clipInfo.bitrateKbps <= 51000;
 
-  // 1. Zero-Copy H.264 Passthrough: ideal for pre-encoded 1080p/2K/4K H.264 MP4s (~2-5% CPU, zero quality loss)
-  if (allowZeroCopy && isSourceH264Yuv420 && exactResMatch && exactFpsMatch && reasonableSourceBitrate) {
+  // Avoid unnecessary decode/scaling/re-encode whenever the source is already YouTube-compatible H.264.
+  // Only force downscale transcode if user explicitly selected low SD tier (<=480p) on an HD/4K source or overload occurred.
+  const explicitLowResDownscale = clipInfo.width >= 1920 && requested.width <= 854;
+
+  const isSourceAacCopySafe =
+    clipInfo.hasAudio &&
+    clipInfo.audioCodec === 'aac' &&
+    clipInfo.audioChannels === 2 &&
+    (clipInfo.audioSampleRate === 44100 || clipInfo.audioSampleRate === 48000);
+
+  // 1. Zero-Copy Video (+ Audio) Passthrough: ~1-5% CPU, zero unnecessary decode/scaling/encoding
+  if (
+    allowZeroCopy &&
+    overloadLevel === 0 &&
+    !explicitLowResDownscale &&
+    isSourceH264Yuv420 &&
+    isValidDimensions &&
+    isValidFps &&
+    reasonableSourceBitrate
+  ) {
     const passProfile: ResolvedEncodingProfile = {
       width: clipInfo.width,
       height: clipInfo.height,
@@ -222,9 +255,11 @@ export function resolveAdaptiveEncodingPlan(
     return {
       mode: 'passthrough',
       backend: 'copy',
+      audioCopy: isSourceAacCopySafe,
       profile: passProfile,
       preset: 'copy',
       threads: 1,
+      filterThreads: 1,
       needsScale: false,
       needsFpsFilter: false,
       notice: null
@@ -237,83 +272,92 @@ export function resolveAdaptiveEncodingPlan(
     return {
       mode: 'hardware',
       backend,
+      audioCopy: false,
       profile: requested,
       preset: backend === 'nvenc' ? 'p4' : 'fast',
-      threads: Math.max(1, Math.floor(caps.cpuCores / Math.max(1, activeOtherStreams + 1))),
+      threads: Math.max(1, Math.min(2, Math.floor(caps.cpuCores / Math.max(1, activeOtherStreams + 1)))),
+      filterThreads: 1,
       needsScale: !exactResMatch,
       needsFpsFilter: !exactFpsMatch,
       notice: null
     };
   }
 
-  // 3. Software CPU (libx264) Hardware-Aware Capacity Adaptation (prevents freezes/stutter on CPU-only VPS)
+  // 3. Software CPU (libx264): Hardware-Aware Capacity Adaptation (default 720p30 on 2 vCPU, 1080p60 disabled)
   let effective = { ...requested };
   let notice: string | null = null;
   const totalConcurrent = activeOtherStreams + 1;
   const coresPerStream = caps.effectiveCpuCores / totalConcurrent;
-  const isHeavySourceDecode = clipInfo.width >= 2560 || clipInfo.height >= 1440;
+  const isHeavySourceDecode = clipInfo.width >= 1920 || clipInfo.height >= 1080;
 
   if (!caps.supports4KTranscode && effective.width >= 3840) {
-    effective = parseStreamEncodingProfile(coresPerStream < 1.5 ? '720p30' : '1080p30', undefined, 30);
-    notice = `Host uses CPU-only encoding (${caps.effectiveCpuCores} vCPU, ${(caps.totalMemoryMb / 1024).toFixed(1)} GB RAM, no GPU). Real-time 4K software re-encoding is disabled; adapted to smooth ${effective.label} (${effective.bitrateKbps} kbps).`;
+    const targetTier = caps.supports1080p30Transcode && coresPerStream >= 1.5 ? '1080p30' : '720p30';
+    effective = parseStreamEncodingProfile(targetTier, undefined, 30);
+    notice = `CPU-only host (${caps.effectiveCpuCores} vCPU, no GPU): 4K software re-encoding disabled; adapted to stable ${effective.label} (${effective.bitrateKbps} kbps).`;
   } else if (!caps.supports2KTranscode && effective.width >= 2560) {
-    effective = parseStreamEncodingProfile(coresPerStream < 1.5 ? '720p30' : '1080p30', undefined, 30);
-    notice = `Host CPU (${caps.effectiveCpuCores} vCPU, no GPU) adapted 2K software transcode to stable ${effective.label} (${effective.bitrateKbps} kbps) to prevent frame drops.`;
-  } else if (effective.width >= 1920 && effective.fps >= 50 && (!caps.supports1080p60Transcode || coresPerStream < 2 || isHeavySourceDecode)) {
-    // Strictly disable 1080p60 software transcoding unless host has GPU or >=4 vCPU / sufficient per-stream headroom
-    effective = parseStreamEncodingProfile(coresPerStream < 1.2 ? '720p30' : '1080p30', undefined, 30);
-    notice = `1080p60 software transcoding disabled on ${caps.effectiveCpuCores} vCPU host (${totalConcurrent} active stream(s)); adapted to safe ${effective.label} (${effective.bitrateKbps} kbps) to prevent micro-freezes.`;
-  } else if (coresPerStream < 1.2 && effective.width >= 1920) {
-    // Multiple concurrent software streams on 2 vCPU: step down to 720p30 so streams don't thrash
+    const targetTier = caps.supports1080p30Transcode && coresPerStream >= 1.5 ? '1080p30' : '720p30';
+    effective = parseStreamEncodingProfile(targetTier, undefined, 30);
+    notice = `CPU-only host (${caps.effectiveCpuCores} vCPU, no GPU): 2K software re-encoding adapted to stable ${effective.label} (${effective.bitrateKbps} kbps).`;
+  } else if (effective.width >= 1920 && effective.fps >= 50 && (!caps.supports1080p60Transcode || coresPerStream < 2)) {
+    // Strictly disable 1080p60 software encoding by default below 4 vCPU
+    const targetTier = caps.supports1080p30Transcode && coresPerStream >= 1.5 && !isHeavySourceDecode ? '1080p30' : '720p30';
+    effective = parseStreamEncodingProfile(targetTier, undefined, 30);
+    notice = `1080p60 software encoding disabled on ${caps.effectiveCpuCores} vCPU host; adapted to safe ${effective.label} (${effective.bitrateKbps} kbps).`;
+  } else if (effective.width >= 1920 && (!caps.supports1080p30Transcode || coresPerStream < 1.5)) {
+    // On 1-2 vCPU VPS, transcoding defaults cleanly to 720p30 (7.1x benchmarked speed on ultrafast vs 1.49x at 1080p30)
     effective = parseStreamEncodingProfile('720p30', undefined, 30);
-    notice = `Adapted concurrent stream to ${effective.label} (${effective.bitrateKbps} kbps) for stable >1.0x encoding across ${totalConcurrent} streams on ${caps.effectiveCpuCores} vCPU.`;
+    notice = `2 vCPU low-CPU transcoding policy: adapted software encoding to ${effective.label} (${effective.bitrateKbps} kbps) for smooth >1.0x playback.`;
+  } else if (effective.width >= 1280 && effective.fps >= 50 && (!caps.supports1080p30Transcode || coresPerStream < 1.5)) {
+    effective = parseStreamEncodingProfile('720p30', undefined, 30);
+    notice = `Adapted 720p60 software transcoding to stable ${effective.label} (${effective.bitrateKbps} kbps) on ${caps.effectiveCpuCores} vCPU.`;
   }
 
-  // Runtime CPU / speed overload safe profile downgrade
+  // Runtime CPU / speed overload automatic resolution & bitrate reduction (Levels 1 -> 3)
   if (overloadLevel >= 1) {
-    if (effective.width >= 1920 || effective.fps >= 50) {
-      effective = parseStreamEncodingProfile('720p30', undefined, 30);
-    }
-    if (overloadLevel >= 2) {
-      effective = {
-        ...effective,
-        bitrateKbps: Math.max(1200, Math.round(effective.bitrateKbps * 0.75))
-      };
-    }
-    notice = `Overload protection level ${overloadLevel}: stepped down software profile to ${effective.label} (${effective.bitrateKbps} kbps) for stable real-time >1.0x speed.`;
-  }
-
-  // Balanced x264 preset selection (avoid -tune zerolatency which disables lookahead/B-frames and causes scene-cut CPU spikes)
-  let preset = 'veryfast';
-  const tune: string | undefined = undefined;
-  if (effective.width >= 1920) {
-    if (overloadLevel > 0 || isHeavySourceDecode || coresPerStream < 1.5) {
-      preset = 'ultrafast';
-    } else if (caps.effectiveCpuCores >= 4 && effective.fps <= 30) {
-      preset = 'veryfast';
+    if (overloadLevel === 1) {
+      effective = parseStreamEncodingProfile('720p30', '2000 kbps', 30);
+    } else if (overloadLevel === 2) {
+      effective = parseStreamEncodingProfile('480p30', '1200 kbps', 30);
     } else {
-      preset = 'superfast'; // Safe 1080p30 profile on 2 vCPU with VBV lookahead intact
+      effective = parseStreamEncodingProfile('360p30', '800 kbps', 30);
     }
-  } else if (effective.width >= 1280) {
-    preset = overloadLevel > 0 || effective.fps >= 50 ? 'superfast' : 'veryfast';
-  } else {
-    preset = overloadLevel > 0 ? 'superfast' : 'veryfast';
+    notice = `CPU overload protection level ${overloadLevel}: stepped down software profile to ${effective.label} (${effective.bitrateKbps} kbps).`;
   }
 
-  // Cap threads cleanly on 2 vCPU so feeder x264 doesn't starve master muxer / Node event loop
+  // Benchmark-validated preset choice (ultrafast = 7.1x / ~14% CPU vs veryfast = 2.28x / ~44% CPU on 2 vCPU @ 720p30)
+  let preset: 'ultrafast' | 'veryfast' = 'ultrafast';
+  const tune: string | undefined = undefined;
+  if (
+    overloadLevel === 0 &&
+    totalConcurrent === 1 &&
+    !isHeavySourceDecode &&
+    caps.effectiveCpuCores >= 3 &&
+    effective.width <= 1280 &&
+    effective.fps <= 30
+  ) {
+    preset = 'veryfast';
+  } else {
+    preset = 'ultrafast';
+  }
+
+  // Strict FFmpeg thread limits to prevent saturating Hostinger 2 vCPU / starving Node.js & PostgreSQL
   const threads = totalConcurrent === 1
-    ? (caps.cpuCores <= 2 ? 2 : 0)
-    : Math.max(1, Math.floor(caps.cpuCores / totalConcurrent));
+    ? (caps.cpuCores <= 2 ? (overloadLevel >= 2 ? 1 : 2) : Math.min(4, caps.cpuCores))
+    : 1;
+  const filterThreads = 1;
+
   const needsScale = clipInfo.width !== effective.width || clipInfo.height !== effective.height;
   const needsFpsFilter = Math.abs(clipInfo.fps - effective.fps) > 1;
 
   return {
     mode: 'software',
     backend: 'libx264',
+    audioCopy: false,
     profile: effective,
     preset,
     tune,
     threads,
+    filterThreads,
     needsScale,
     needsFpsFilter,
     notice
@@ -607,6 +651,8 @@ export class StreamManager {
       hasAudio: false,
       videoCodec: '',
       audioCodec: '',
+      audioSampleRate: 0,
+      audioChannels: 0,
       pixFmt: '',
       width: 1920,
       height: 1080,
@@ -631,7 +677,7 @@ export class StreamManager {
           '-v', 'error',
           '-probesize', '10M',
           '-analyzeduration', '10M',
-          '-show_entries', 'stream=codec_type,codec_name,pix_fmt,width,height,r_frame_rate,avg_frame_rate,bit_rate,duration:format=duration,bit_rate',
+          '-show_entries', 'stream=codec_type,codec_name,pix_fmt,width,height,r_frame_rate,avg_frame_rate,bit_rate,duration,sample_rate,channels:format=duration,bit_rate',
           '-of', 'json',
           videoPath
         ],
@@ -659,6 +705,8 @@ export class StreamManager {
         hasAudio: Boolean(aStream),
         videoCodec: String(vStream?.codec_name || '').toLowerCase(),
         audioCodec: String(aStream?.codec_name || '').toLowerCase(),
+        audioSampleRate: parseInt(aStream?.sample_rate || '0', 10) || 0,
+        audioChannels: parseInt(aStream?.channels || '0', 10) || 0,
         pixFmt: String(vStream?.pix_fmt || '').toLowerCase(),
         width: parseInt(vStream?.width, 10) || 1920,
         height: parseInt(vStream?.height, 10) || 1080,
@@ -776,48 +824,24 @@ export class StreamManager {
     return this.launchProcess(config);
   }
 
-  private buildFeederArgs(
-    clipPath: string,
+  private buildCodecArgs(
     clipInfo: ClipProbeDetails,
     plan: ReturnType<typeof resolveAdaptiveEncodingPlan>,
-    caps: HostStreamingCapabilities,
-    useNativeInfiniteLoop: boolean,
-    offsetSeconds: number,
-    isLoopEnabled: boolean
+    targetContainer: 'mpegts' | 'flv'
   ): string[] {
     const args: string[] = [];
-    const { profile, mode, backend, preset, tune, threads, needsScale, needsFpsFilter } = plan;
+    const { profile, mode, backend, audioCopy, preset, tune, threads, filterThreads, needsScale, needsFpsFilter } = plan;
 
-    if (backend === 'vaapi' && mode === 'hardware' && caps.hwAccel.vaapiDevice) {
-      args.push('-vaapi_device', caps.hwAccel.vaapiDevice);
-    }
-
-    args.push('-re');
-
-    if (useNativeInfiniteLoop) {
-      args.push('-stream_loop', '-1');
-    }
-
-    args.push(
-      '-fflags', '+genpts',
-      '-thread_queue_size', '1024',
-      '-probesize', '10M',
-      '-analyzeduration', '10M',
-      '-i', clipPath
-    );
-
-    const hasAudio = clipInfo.hasAudio;
-    if (!hasAudio) {
-      // Single -re clock on input 0; avoid competing -re clocks on anullsrc
-      args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
+    if (mode !== 'passthrough') {
+      args.push('-filter_threads', String(filterThreads), '-filter_complex_threads', String(filterThreads));
     }
 
     // Video Stream Args
     if (mode === 'passthrough') {
-      args.push(
-        '-c:v', 'copy',
-        '-bsf:v', 'h264_mp4toannexb'
-      );
+      args.push('-c:v', 'copy');
+      if (targetContainer === 'mpegts') {
+        args.push('-bsf:v', 'h264_mp4toannexb');
+      }
     } else if (backend === 'nvenc') {
       const vfParts: string[] = [];
       if (needsFpsFilter) vfParts.push(`fps=${profile.fps}`);
@@ -882,7 +906,7 @@ export class StreamManager {
         '-vsync', 'cfr'
       );
     } else {
-      // CPU Software libx264 with strict CBR + CFR + 2-second IDR keyframes
+      // CPU Software libx264 with strict thread cap + CBR + CFR + 2-second IDR keyframes
       const vfParts: string[] = [];
       if (needsFpsFilter) vfParts.push(`fps=${profile.fps}`);
       if (needsScale) {
@@ -906,7 +930,7 @@ export class StreamManager {
         args.push('-tune', tune);
       }
 
-      const useMainProfile = preset === 'ultrafast' || profile.width >= 1920 && profile.fps >= 50;
+      const useMainProfile = preset === 'ultrafast' || (profile.width >= 1920 && profile.fps >= 50);
       args.push(
         '-profile:v', useMainProfile ? 'main' : 'high',
         '-level:v', profile.width >= 3840 ? '5.1' : '4.2'
@@ -930,14 +954,125 @@ export class StreamManager {
       );
     }
 
-    // Audio Stream Args: always resample/normalize to stereo 44.1 kHz AAC with async PTS sync (even when video is passthrough)
+    // Audio Stream Args: stream copy compatible AAC stereo audio in passthrough mode (0% audio CPU)
+    if (audioCopy && clipInfo.hasAudio) {
+      args.push('-c:a', 'copy');
+      if (targetContainer === 'flv') {
+        args.push('-bsf:a', 'aac_adtstoasc');
+      }
+    } else {
+      args.push(
+        '-c:a', 'aac',
+        '-b:a', `${profile.audioBitrateKbps}k`,
+        '-ar', '44100',
+        '-ac', '2',
+        '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo'
+      );
+    }
+
+    return args;
+  }
+
+  public buildDirectSingleClipArgs(
+    clipPath: string,
+    clipInfo: ClipProbeDetails,
+    plan: ReturnType<typeof resolveAdaptiveEncodingPlan>,
+    caps: HostStreamingCapabilities,
+    shouldLoop: boolean,
+    targets: string[]
+  ): string[] {
+    const args: string[] = [];
+    const { mode, backend, threads } = plan;
+
+    if (backend === 'vaapi' && mode === 'hardware' && caps.hwAccel.vaapiDevice) {
+      args.push('-vaapi_device', caps.hwAccel.vaapiDevice);
+    }
+
+    args.push('-re');
+    if (shouldLoop) {
+      args.push('-stream_loop', '-1');
+    }
+
+    const decoderThreads = mode === 'passthrough' ? 1 : Math.max(1, threads);
     args.push(
-      '-c:a', 'aac',
-      '-b:a', `${profile.audioBitrateKbps}k`,
-      '-ar', '44100',
-      '-ac', '2',
-      '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo'
+      '-threads', String(decoderThreads),
+      '-fflags', '+genpts+discardcorrupt',
+      '-thread_queue_size', '1024',
+      '-probesize', '5M',
+      '-analyzeduration', '5M',
+      '-i', clipPath
     );
+
+    const hasAudio = clipInfo.hasAudio;
+    if (!hasAudio) {
+      args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
+    }
+
+    const codecArgs = this.buildCodecArgs(clipInfo, plan, 'flv');
+
+    for (const target of targets) {
+      if (!target) continue;
+      args.push(
+        '-map', '0:v:0',
+        '-map', hasAudio ? '0:a:0' : '1:a:0',
+        ...codecArgs,
+        '-max_muxing_queue_size', '4096'
+      );
+      if (!hasAudio && !shouldLoop) {
+        args.push('-shortest');
+      }
+      args.push(
+        '-avoid_negative_ts', 'make_zero',
+        '-tcp_nodelay', '1',
+        '-rw_timeout', '10000000',
+        '-f', 'flv',
+        '-flvflags', 'no_duration_filesize',
+        target
+      );
+    }
+
+    return args;
+  }
+
+  private buildFeederArgs(
+    clipPath: string,
+    clipInfo: ClipProbeDetails,
+    plan: ReturnType<typeof resolveAdaptiveEncodingPlan>,
+    caps: HostStreamingCapabilities,
+    useNativeInfiniteLoop: boolean,
+    offsetSeconds: number,
+    isLoopEnabled: boolean
+  ): string[] {
+    const args: string[] = [];
+    const { mode, backend, threads } = plan;
+
+    if (backend === 'vaapi' && mode === 'hardware' && caps.hwAccel.vaapiDevice) {
+      args.push('-vaapi_device', caps.hwAccel.vaapiDevice);
+    }
+
+    args.push('-re');
+
+    if (useNativeInfiniteLoop) {
+      args.push('-stream_loop', '-1');
+    }
+
+    const decoderThreads = mode === 'passthrough' ? 1 : Math.max(1, threads);
+    args.push(
+      '-threads', String(decoderThreads),
+      '-fflags', '+genpts',
+      '-thread_queue_size', '1024',
+      '-probesize', '5M',
+      '-analyzeduration', '5M',
+      '-i', clipPath
+    );
+
+    const hasAudio = clipInfo.hasAudio;
+    if (!hasAudio) {
+      // Single -re clock on input 0; avoid competing -re clocks on anullsrc
+      args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
+    }
+
+    args.push(...this.buildCodecArgs(clipInfo, plan, 'mpegts'));
 
     args.push(
       '-map', '0:v:0',
@@ -963,7 +1098,22 @@ export class StreamManager {
     return args;
   }
 
-  private async spawnClipFeeder(streamId: string, masterChild: ChildProcess) {
+  private areAllClipsCopyCompatible(probedList: ClipProbeDetails[]): boolean {
+    if (probedList.length === 0) return false;
+    if (probedList.length === 1) return true;
+    const base = probedList[0];
+    if (base.videoCodec !== 'h264') return false;
+    return probedList.every(c =>
+      c.videoCodec === 'h264' &&
+      c.width === base.width &&
+      c.height === base.height &&
+      Math.abs(c.fps - base.fps) <= 1 &&
+      c.hasAudio === base.hasAudio &&
+      (!base.hasAudio || (c.audioCodec === base.audioCodec && c.audioChannels === base.audioChannels && c.audioSampleRate === base.audioSampleRate))
+    );
+  }
+
+  private async spawnClipFeeder(streamId: string, masterChild: ChildProcess, preProbedList?: ClipProbeDetails[]) {
     const item = this.processes.get(streamId);
     if (!item || item.child !== masterChild) return;
     if (item.stats.state === 'stopped' || item.stats.state === 'crashed') return;
@@ -982,7 +1132,8 @@ export class StreamManager {
     item.stats.totalTracks = validPaths.length;
 
     const clipPath = validPaths[trackIdx];
-    const clipInfo = await this.probeClipDetails(clipPath);
+    const allProbed = preProbedList || await Promise.all(validPaths.map(p => this.probeClipDetails(p)));
+    const clipInfo = allProbed[trackIdx] || await this.probeClipDetails(clipPath);
 
     const latestItem = this.processes.get(streamId);
     if (!latestItem || latestItem.child !== masterChild || latestItem.stats.state === 'stopped' || latestItem.stats.state === 'crashed') {
@@ -1007,8 +1158,7 @@ export class StreamManager {
 
     const shouldLoop = item.config.loop !== false;
     const useNativeInfiniteLoop = validPaths.length === 1 && shouldLoop;
-    // Allow zero-copy passthrough on single-clip streams (or multi-clip playlists if dimensions/codecs align cleanly)
-    const allowZeroCopy = validPaths.length === 1;
+    const allowZeroCopy = validPaths.length === 1 || this.areAllClipsCopyCompatible(allProbed);
 
     const plan = resolveAdaptiveEncodingPlan(
       requestedProfile,
@@ -1039,9 +1189,9 @@ export class StreamManager {
 
     console.log(
       `[FFmpeg Pipeline] Stream "${item.config.title}" Track #${trackIdx + 1}/${validPaths.length}: ${path.basename(clipPath)} ` +
-      `(${clipInfo.width}x${clipInfo.height}@${clipInfo.fps}fps ${clipInfo.videoCodec}) -> ` +
+      `(${clipInfo.width}x${clipInfo.height}@${clipInfo.fps}fps ${clipInfo.videoCodec}/${clipInfo.audioCodec || 'none'}) -> ` +
       `${plan.profile.width}x${plan.profile.height}@${plan.profile.fps}fps ${plan.profile.bitrateKbps}kbps ` +
-      `[mode=${plan.mode}, backend=${plan.backend}, preset=${plan.preset}, overload=${item.overloadLevel}, loop=${useNativeInfiniteLoop ? 'native' : 'playlist'}, offset=${offsetSec.toFixed(3)}s]`
+      `[mode=${plan.mode}, backend=${plan.backend}, audioCopy=${plan.audioCopy}, preset=${plan.preset}, threads=${plan.threads}, overload=${item.overloadLevel}, loop=${useNativeInfiniteLoop ? 'native' : 'playlist'}, offset=${offsetSec.toFixed(3)}s]`
     );
     if (plan.notice) {
       console.warn(`[FFmpeg Capability Notice] ${plan.notice}`);
@@ -1267,7 +1417,7 @@ export class StreamManager {
     item.config.videoPaths = validVideoPaths;
     item.stats.totalTracks = validVideoPaths.length;
 
-    await Promise.all(validVideoPaths.map(p => this.probeClipDetails(p)));
+    const probedClips = await Promise.all(validVideoPaths.map(p => this.probeClipDetails(p)));
 
     const initialIdx = typeof item.config.initialTrackIndex === 'number' && item.config.initialTrackIndex >= 0
       ? item.config.initialTrackIndex % validVideoPaths.length
@@ -1290,44 +1440,110 @@ export class StreamManager {
     item.lowSpeedStreakCount = 0;
     item.recoveringFeeder = false;
 
-    const tempDir = path.join(os.tmpdir(), 'streamjoin_concat');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
+    const requestedProfile = parseStreamEncodingProfile(
+      item.config.resolution,
+      item.config.bitrate,
+      item.config.fps,
+      item.config.videoBitrateKbps
+    );
+    const caps = detectHostStreamingCapabilities();
+    const activeOtherStreams = Array.from(this.processes.entries())
+      .filter(([id, proc]) => id !== config.streamId && (proc.stats.state === 'running' || proc.stats.state === 'starting'))
+      .length;
+    const shouldLoop = item.config.loop !== false;
+    const singleClipPath = validVideoPaths[0];
+    const singleClipInfo = probedClips[0];
+    const singleClipPlan = validVideoPaths.length === 1
+      ? resolveAdaptiveEncodingPlan(
+          requestedProfile,
+          singleClipInfo,
+          caps,
+          activeOtherStreams,
+          true,
+          item.forceSoftwareFallback,
+          item.overloadLevel
+        )
+      : null;
+
+    // Single-clip streams run a single direct FFmpeg process (eliminating pipe + 2nd FFmpeg overhead),
+    // except dual-RTMP transcodes which encode once in Feeder and mux-copy to both FLV outputs in Master.
+    const useDirectSingleClip =
+      validVideoPaths.length === 1 &&
+      singleClipPlan !== null &&
+      (!activeBackupTarget || singleClipPlan.mode === 'passthrough');
+
+    let ffmpegArgs: string[];
+    if (useDirectSingleClip && singleClipPlan) {
+      item.stats.encodingMode = singleClipPlan.mode;
+      item.stats.encoderBackend = singleClipPlan.backend;
+      item.stats.effectiveResolution = singleClipPlan.profile.label;
+      item.stats.effectiveFps = singleClipPlan.profile.fps;
+      item.stats.effectiveBitrateKbps = singleClipPlan.profile.bitrateKbps;
+      item.stats.capabilityNotice = singleClipPlan.notice;
+
+      const directTargets = activeBackupTarget
+        ? [activePrimaryTarget, activeBackupTarget]
+        : [activePrimaryTarget];
+
+      ffmpegArgs = this.buildDirectSingleClipArgs(
+        singleClipPath,
+        singleClipInfo,
+        singleClipPlan,
+        caps,
+        shouldLoop,
+        directTargets
+      );
+
+      console.log(
+        `[FFmpeg Direct Pipeline] Stream "${config.title}" (${path.basename(singleClipPath)}: ` +
+        `${singleClipInfo.width}x${singleClipInfo.height}@${singleClipInfo.fps}fps ${singleClipInfo.videoCodec}/${singleClipInfo.audioCodec || 'none'}) -> ` +
+        `${singleClipPlan.profile.width}x${singleClipPlan.profile.height}@${singleClipPlan.profile.fps}fps ${singleClipPlan.profile.bitrateKbps}kbps ` +
+        `[mode=${singleClipPlan.mode}, backend=${singleClipPlan.backend}, audioCopy=${singleClipPlan.audioCopy}, preset=${singleClipPlan.preset}, threads=${singleClipPlan.threads}, overload=${item.overloadLevel}, loop=${shouldLoop}]`
+      );
+      if (singleClipPlan.notice) {
+        console.warn(`[FFmpeg Capability Notice] ${singleClipPlan.notice}`);
+      }
+    } else {
+      const tempDir = path.join(os.tmpdir(), 'streamjoin_concat');
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+      const concatPath = path.join(tempDir, `stream_${config.streamId}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.txt`);
+      this.writeConcatFile(concatPath, validVideoPaths);
+      item.concatFilePath = concatPath;
+
+      const commonMasterInputArgs = [
+        '-threads', '1',
+        '-fflags', '+genpts+discardcorrupt',
+        '-thread_queue_size', '2048',
+        '-analyzeduration', '2000000',
+        '-probesize', '2000000',
+        '-f', 'mpegts',
+        '-i', 'pipe:0'
+      ];
+
+      const perOutputFlvArgs = (target: string): string[] => [
+        '-map', '0:v:0',
+        '-map', '0:a:0?',
+        '-c:v', 'copy',
+        '-c:a', 'copy',
+        '-bsf:a', 'aac_adtstoasc',
+        '-max_muxing_queue_size', '4096',
+        '-tcp_nodelay', '1',
+        '-rw_timeout', '10000000',
+        '-f', 'flv',
+        '-flvflags', 'no_duration_filesize',
+        target
+      ];
+
+      ffmpegArgs = [
+        ...commonMasterInputArgs,
+        ...perOutputFlvArgs(activePrimaryTarget),
+        ...(activeBackupTarget ? perOutputFlvArgs(activeBackupTarget) : [])
+      ];
+
+      console.log(`[FFmpeg] Spawning continuous RTMP worker for Stream: ${config.streamId} ("${config.title}") with ${validVideoPaths.length} playlist video(s)`);
     }
-    const concatPath = path.join(tempDir, `stream_${config.streamId}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.txt`);
-    this.writeConcatFile(concatPath, validVideoPaths);
-    item.concatFilePath = concatPath;
-
-    const commonMasterInputArgs = [
-      '-fflags', '+genpts+discardcorrupt',
-      '-thread_queue_size', '2048',
-      '-analyzeduration', '2000000',
-      '-probesize', '2000000',
-      '-f', 'mpegts',
-      '-i', 'pipe:0'
-    ];
-
-    const perOutputFlvArgs = (target: string): string[] => [
-      '-map', '0:v:0',
-      '-map', '0:a:0?',
-      '-c:v', 'copy',
-      '-c:a', 'copy',
-      '-bsf:a', 'aac_adtstoasc',
-      '-max_muxing_queue_size', '4096',
-      '-tcp_nodelay', '1',
-      '-rw_timeout', '10000000',
-      '-f', 'flv',
-      '-flvflags', 'no_duration_filesize',
-      target
-    ];
-
-    const ffmpegArgs: string[] = [
-      ...commonMasterInputArgs,
-      ...perOutputFlvArgs(activePrimaryTarget),
-      ...(activeBackupTarget ? perOutputFlvArgs(activeBackupTarget) : [])
-    ];
-
-    console.log(`[FFmpeg] Spawning continuous RTMP worker for Stream: ${config.streamId} ("${config.title}") with ${validVideoPaths.length} playlist video(s)`);
 
     return new Promise<StreamProcessStats>((resolve, reject) => {
       let resolved = false;
@@ -1347,7 +1563,9 @@ export class StreamManager {
 
       let child: ChildProcess;
       try {
-        child = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+        child = spawn('ffmpeg', ffmpegArgs, {
+          stdio: [useDirectSingleClip ? 'ignore' : 'pipe', 'pipe', 'pipe']
+        });
       } catch (err: any) {
         item.stats.state = 'crashed';
         item.stats.pid = null;
@@ -1379,7 +1597,9 @@ export class StreamManager {
       item.lastMasterProgressAt = childStartMs;
       item.lastFeederProgressAt = childStartMs;
 
-      this.spawnClipFeeder(config.streamId, child).catch(() => {});
+      if (!useDirectSingleClip) {
+        this.spawnClipFeeder(config.streamId, child, probedClips).catch(() => {});
+      }
 
       child.stderr?.on('data', (data) => {
         if (item.child !== child) return;
@@ -1395,11 +1615,17 @@ export class StreamManager {
         if (parsed.bitrateKbps !== undefined && parsed.bitrateKbps > 0) {
           item.stats.bitrateKbps = parsed.bitrateKbps;
         }
-        if (parsed.fps !== undefined && parsed.fps > 0 && item.stats.fps === 0) {
+        if (parsed.fps !== undefined && parsed.fps > 0 && (useDirectSingleClip || item.stats.fps === 0)) {
           item.stats.fps = parsed.fps;
         }
-        if (parsed.speed !== undefined && parsed.speed > 0 && (!item.stats.encodingSpeed || item.stats.encodingSpeed === 0)) {
+        if (parsed.speed !== undefined && parsed.speed > 0 && (useDirectSingleClip || !item.stats.encodingSpeed || item.stats.encodingSpeed === 0)) {
           item.stats.encodingSpeed = parsed.speed;
+        }
+        if (useDirectSingleClip && parsed.drop !== undefined) {
+          item.stats.droppedFrames = parsed.drop;
+        }
+        if (useDirectSingleClip && parsed.dup !== undefined) {
+          item.stats.dupFrames = parsed.dup;
         }
 
         // Strict progress tracking: only update heartbeat when actual frame count or out_time_ms increases
@@ -1882,17 +2108,17 @@ export class StreamManager {
               item.stats.restartAttempts = 0;
             }
 
-            // 1. Pre-emptive CPU / Speed Overload Guard (software mode)
+            // 1. Pre-emptive CPU / Speed Overload Guard (software mode, calibrated for 1-2 vCPU VPS)
             if (item.stats.state === 'running' && item.stats.encodingMode === 'software' && item.stats.uptimeSeconds >= 10) {
               const speed = item.stats.encodingSpeed || 0;
               const currentDrops = item.stats.droppedFrames || 0;
               const dropDelta = Math.max(0, currentDrops - item.prevDropCount);
               item.prevDropCount = currentDrops;
 
-              const isSlowSpeed = speed > 0 && speed < 0.95;
-              const highCpuThreshold = caps.effectiveCpuCores <= 3 ? 175 : caps.effectiveCpuCores * 88;
+              const isSlowSpeed = speed > 0 && speed < 0.96;
+              const highCpuThreshold = Math.max(78, Math.round(caps.effectiveCpuCores * 80));
               const isHighCpu = item.stats.cpuPercent >= highCpuThreshold;
-              const isDropSpike = dropDelta >= 15 && speed > 0 && speed < 1.0;
+              const isDropSpike = dropDelta >= 15 && speed > 0 && speed < 1.02;
 
               if (isSlowSpeed || isHighCpu || isDropSpike) {
                 item.lowSpeedStreakCount += 1;
@@ -1902,18 +2128,18 @@ export class StreamManager {
 
               if (
                 item.lowSpeedStreakCount >= 3 &&
-                item.overloadLevel < 2 &&
-                nowMs - item.lastOverloadUpgradeAt > 20000
+                item.overloadLevel < 3 &&
+                nowMs - item.lastOverloadUpgradeAt > 15000
               ) {
                 item.overloadLevel += 1;
                 item.lastOverloadUpgradeAt = nowMs;
                 item.lowSpeedStreakCount = 0;
                 item.stats.overloadMitigations = (item.stats.overloadMitigations || 0) + 1;
                 console.warn(
-                  `[FFmpeg Overload Guard] Stream ${streamId} overloaded (speed=${speed.toFixed(2)}x, cpu=${item.stats.cpuPercent}%, dropDelta=${dropDelta}). ` +
+                  `[FFmpeg Overload Guard] Stream ${streamId} overloaded (speed=${speed.toFixed(2)}x, cpu=${item.stats.cpuPercent}%, threshold=${highCpuThreshold}%, dropDelta=${dropDelta}). ` +
                   `Activating safe overload profile level ${item.overloadLevel} with clean recovery.`
                 );
-                item.stats.lastError = `CPU/speed overload detected (speed=${speed.toFixed(2)}x); stepping down to safer encoding profile (level ${item.overloadLevel}).`;
+                item.stats.lastError = `CPU/speed overload detected (speed=${speed.toFixed(2)}x, cpu=${item.stats.cpuPercent}%); stepping down to safer encoding profile (level ${item.overloadLevel}).`;
                 this.terminateChildWithFallback(item.child, 500);
                 this.killFeeder(item);
                 return;

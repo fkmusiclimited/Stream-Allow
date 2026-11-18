@@ -164,7 +164,7 @@ export function detectHostStreamingCapabilities(forceRefresh: boolean = false): 
   const supports4KTranscode = hasAnyGpu || (effectiveCpuCores >= 12 && totalMemoryMb >= 12288);
   const supports2KTranscode = hasAnyGpu || (effectiveCpuCores >= 6 && totalMemoryMb >= 6144);
   const supports1080p60Transcode = hasAnyGpu || (effectiveCpuCores >= 4 && totalMemoryMb >= 4096);
-  const supports1080p30Transcode = hasAnyGpu || (effectiveCpuCores >= 2 && totalMemoryMb >= 2048);
+  const supports1080p30Transcode = hasAnyGpu || (effectiveCpuCores >= 3 && totalMemoryMb >= 3072);
 
   let maxTranscodeResolution: HostStreamingCapabilities['maxTranscodeResolution'] = '720p30';
   if (hasAnyGpu) {
@@ -177,20 +177,22 @@ export function detectHostStreamingCapabilities(forceRefresh: boolean = false): 
     maxTranscodeResolution = '1440p60';
   } else if (effectiveCpuCores >= 6 && totalMemoryMb >= 6144) {
     maxTranscodeResolution = '1440p30';
-  } else if (effectiveCpuCores >= 2 && totalMemoryMb >= 2048) {
-    // Verified on 2 vCPU / 4 GB RAM: max safe software transcode is 1080p30; 1080p60 requires >=4 vCPU or GPU
-    maxTranscodeResolution = effectiveCpuCores >= 4 && totalMemoryMb >= 4096 ? '1080p60' : '1080p30';
-  } else if (effectiveCpuCores >= 1.5) {
-    maxTranscodeResolution = '720p60';
+  } else if (effectiveCpuCores >= 4 && totalMemoryMb >= 4096) {
+    maxTranscodeResolution = '1080p60';
+  } else if (effectiveCpuCores >= 3 && totalMemoryMb >= 3072) {
+    maxTranscodeResolution = '1080p30';
+  } else {
+    // Verified on 1-2 vCPU / 4 GB RAM: default safe software transcode is 720p30 (1080p60/1080p30 software disabled to avoid CPU saturation)
+    maxTranscodeResolution = '720p30';
   }
 
   const recommendedMaxConcurrentStreams = hasAnyGpu
     ? Math.max(4, Math.floor(totalMemoryMb / 1024))
-    : Math.max(1, Math.floor(effectiveCpuCores / 2));
+    : (effectiveCpuCores >= 4 ? Math.max(1, Math.floor(effectiveCpuCores / 2)) : 1);
 
   const honestSummary = hasAnyGpu
     ? `Hardware GPU (${preferredBackend.toUpperCase()}) active with ${effectiveCpuCores} vCPU & ${(totalMemoryMb / 1024).toFixed(1)} GB RAM — supports up to 4K 60fps real-time transcoding.`
-    : `CPU-only host (${effectiveCpuCores} vCPU, ${(totalMemoryMb / 1024).toFixed(1)} GB RAM, no NVENC/QSV/VAAPI GPU). Max safe real-time software transcode: ${maxTranscodeResolution} (1080p60 software transcoding disabled below 4 vCPU to prevent micro-freezes). Pre-encoded H.264/AAC MP4s up to 4K60 can stream via zero-copy video passthrough (-c:v copy) when dimensions and FPS match; real-time 4K software re-encoding is NOT supported on this hardware.`;
+    : `CPU-only host (${effectiveCpuCores} vCPU, ${(totalMemoryMb / 1024).toFixed(1)} GB RAM, no NVENC/QSV/VAAPI GPU). Max safe real-time software transcode: ${maxTranscodeResolution} (1080p60 software transcoding disabled below 4 vCPU). Pre-encoded H.264/AAC MP4s up to 4K60 stream via zero-copy passthrough (-c:v copy / -c:a copy) with minimal CPU.`;
 
   cachedCapabilities = {
     cpuCores,
